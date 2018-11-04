@@ -2699,6 +2699,10 @@ namespace {
       }
     }
 
+    void addValueWitnessTable() {
+      B.addNullPointer(IGM.WitnessTableTy);
+    }
+
     void addGenericArgument(ClassDecl *forClass) {
       // Filled in at runtime.
       B.addNullPointer(IGM.TypeMetadataPtrTy);

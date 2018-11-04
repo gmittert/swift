@@ -276,7 +276,8 @@ namespace {
       return (ClassHasMissingMembers ||
               ClassHasResilientMembers ||
               ClassHasResilientAncestry ||
-              ClassHasGenericAncestry);
+              ClassHasGenericAncestry ||
+              IGM.Triple.isOSBinFormatCOFF());
     }
 
     bool doesMetadataRequireRelocation() const {
