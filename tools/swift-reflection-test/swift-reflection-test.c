@@ -196,13 +196,13 @@ void PipeMemoryReader_sendDoneMessage(const PipeMemoryReader *Reader) {
   write(WriteFD, REQUEST_DONE, 2);
 }
 
-static
+ static
 PipeMemoryReader createPipeMemoryReader() {
   PipeMemoryReader Reader;
 #if defined(_WIN32)
-  if (pipe(Reader.to_child, 256, _O_BINARY))
+  if (_pipe(Reader.to_child, 256, _O_BINARY))
     errnoAndExit("Couldn't create pipes to child process");
-  if (pipe(Reader.from_child, 256, _O_BINARY))
+  if (_pipe(Reader.from_child, 256, _O_BINARY))
     errnoAndExit("Couldn't create pipes from child process");
 #else
   if (pipe(Reader.to_child))
