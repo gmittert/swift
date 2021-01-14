@@ -66,7 +66,7 @@
 # * toolchain-dev-tools -- install development tools useful in a shared toolchain
 # * dev -- headers and libraries required to use Swift compiler as a library.
 set(_SWIFT_DEFINED_COMPONENTS
-  "autolink-driver;compiler;clang-builtin-headers;clang-resource-dir-symlink;clang-builtin-headers-in-clang-resource-dir;stdlib;stdlib-experimental;sdk-overlay;parser-lib;editor-integration;tools;testsuite-tools;toolchain-tools;toolchain-dev-tools;dev;license;sourcekit-xpc-service;sourcekit-inproc;swift-remote-mirror;swift-remote-mirror-headers;swift-headers")
+  "autolink-driver;compiler;clang-builtin-headers;clang-resource-dir-symlink;clang-builtin-headers-in-clang-resource-dir;stdlib;stdlib-experimental;sdk-overlay;parser-lib;editor-integration;tools;testsuite-tools;toolchain-tools;toolchain-dev-tools;dev;license;sourcekit-xpc-service;sourcekit-inproc;swift-remote-mirror;swift-remote-mirror-headers;swift-headers;swift-lib-headers")
 
 # The default install components include all of the defined components, except
 # for the following exceptions.

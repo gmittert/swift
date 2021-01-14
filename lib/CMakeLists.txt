@@ -48,3 +48,13 @@ add_subdirectory(SymbolGraphGen)
 add_subdirectory(Syntax)
 add_subdirectory(SyntaxParse)
 add_subdirectory(TBDGen)
+
+
+swift_install_in_component(
+  DIRECTORY ${SWIFT_SOURCE_DIR}/lib/
+  DESTINATION "lib-include"
+  COMPONENT swift-lib-headers
+  FILES_MATCHING
+  PATTERN "*.h"
+  PATTERN "*.def"
+)
