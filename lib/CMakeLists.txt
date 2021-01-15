@@ -52,7 +52,7 @@ add_subdirectory(TBDGen)
 
 swift_install_in_component(
   DIRECTORY ${SWIFT_SOURCE_DIR}/lib/
-  DESTINATION "lib-include"
+  DESTINATION "include/swift-private"
   COMPONENT swift-lib-headers
   FILES_MATCHING
   PATTERN "*.h"
