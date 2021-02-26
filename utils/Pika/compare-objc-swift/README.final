@@ -1,0 +1,69 @@
+The whole process is pretty manual, hopefully we are only going through
+this a few times.
+
+-----------------------------------------------------------------------
+On devserver, run
+Apps/Wilde/Facebook/build-pika10.sh -a arm64 -s iphoneos -m production build --buck-all-assets  --config build.delete_temporaries=false  --config 'apple.codesign=/usr/bin/true' --config 'apple.dry_run_code_signing=true' --save-linker-maps
+
+For a build on devserver, we can look at the object files, raw binaries, and linker map files.
+--> copy files: P223463137 (no LTO)
+--> copy files: P223906805 (with monoLTO)
+Need to scp the files over from devserver to mac, the scripts should be run on Mac
+
+For Wilde, we have enabled thinLTO for ObjC sources and monoLTO for Swift sources. thinLTO
+means the .mm.o .m.o files under buck-out are thinLTO bitcode files and the object files will be
+named xxx.arm64.thinlto.o under xxx-lto directories. With monoLTo for Swift, there will be
+one lto.o file for each link unit. The xxxSwift.o files under buck-out are monoLTO bitcode
+files.
+
+The linking step will generate a linker map file: ShareExtensionBinary#iphoneos-arm64-LinkMap.txt
+If we have --save-linker-maps, a processed linker map will be ShareExtension#iphoneos-arm64-LinkMap.txt
+The only processing is mapping thinLTO object files back to the source files. The mapping can be found under xxx-lto/devirt-info.
+Sample lines:
+# Mapping 197 to buck-out/gen/afdfe660/fbobjc/Apps/Wilde/Facebook/facebook-ios-sdk-extension-fork/FacebookSDKExtension#iphoneos-arm64,static/libFacebookSDKExtension.a(FBLogger.m.o)197
+It means the object file for FBLogger.m.o will be 197.arm64.thinlto.o.
+
+We have two sets of scripts, one for the case when there is noLTO for Swift,
+the other for the case of monoLTO for Swift.
+
+--------- monoLTO
+Input: ShareExtension\#iphoneos-arm64-LinkMap.txt
+Inputs: objc.filelist swift.filelist and the list of object files
+-- for objc.filelist, we need to find the corresponding thinlto.o via the mapping entries under devirt-info
+-- we should have a single object file for swift, it should be lto.o under buck-out for the extension
+
+Change /lto.o to /libAllSwift.a/lto.o
+LC_ALL=C sed -i ttt 's/\/lto.o/\/libAllSwift.a(lto.o)/g' Inputs/ShareExtension\#iphoneos-arm64-LinkMap.txt
+buck run //fbobjc/Tools/appsize:compare_objects -- Inputs/ShareExtension\#iphoneos-arm64-LinkMap.txt FBComposerLiteDestinationSwift &> Inputs/second.linkmap.swift
+buck run //fbobjc/Tools/appsize:compare_objects -- Inputs/ShareExtension\#iphoneos-arm64-LinkMap.txt FBComposerLiteUIRootSwift &> Inputs/first.linkmap.swift
+buck run //fbobjc/Tools/appsize:compare_objects -- Inputs/ShareExtension\#iphoneos-arm64-LinkMap.txt FBComposerLiteStoriesPreviewSwift &> Inputs/third.linkmap.swift
+buck run //fbobjc/Tools/appsize:compare_objects -- Inputs/ShareExtension\#iphoneos-arm64-LinkMap.txt AllSwift &> Inputs/allswift.linkmap.swift
+buck run //fbobjc/Tools/appsize:compare_objects -- Inputs/ShareExtension\#iphoneos-arm64-LinkMap.txt FBComposerLiteDestination &> Inputs/second.linkmap.objc
+buck run //fbobjc/Tools/appsize:compare_objects -- Inputs/ShareExtension\#iphoneos-arm64-LinkMap.txt FBComposerLiteUIRootPlugin &> Inputs/first.linkmap.objc
+buck run //fbobjc/Tools/appsize:compare_objects -- Inputs/ShareExtension\#iphoneos-arm64-LinkMap.txt FBComposerLiteStoriesPreview &> Inputs/third.linkmap.objc
+
+run
+ find Inputs -name "*thinlto.o" &> objc.filelist
+ find Inputs -name "lto.o" &> swift.filelist
+ ./amend-linkmap.sh mono
+
+--------- noLTO
+Input: ShareExtension\#iphoneos-arm64-LinkMap.txt
+Inputs: objc.filelist swift.filelist and the list of object files
+-- for objc.filelist, we need to find the corresponding thinlto.o via the mapping entries under devirt-info
+
+Assuming three buck modules for ObjC and two buck modules for Swift:
+-- this needs Max's patch: P223076907 (can't find the diff number)
+-- we should improve this to handle multiple modules
+buck run //fbobjc/Tools/appsize:compare_objects -- Inputs/ShareExtension\#iphoneos-arm64-LinkMap.txt FBComposerLiteDestinationSwift &> Inputs/second.linkmap.swift
+buck run //fbobjc/Tools/appsize:compare_objects -- Inputs/ShareExtension\#iphoneos-arm64-LinkMap.txt FBComposerLiteUIRootSwift &> Inputs/first.linkmap.swift
+buck run //fbobjc/Tools/appsize:compare_objects -- Inputs/ShareExtension\#iphoneos-arm64-LinkMap.txt FBComposerLiteStoriesPreviewSwift &> Inputs/third.linkmap.swift
+buck run //fbobjc/Tools/appsize:compare_objects -- Inputs/ShareExtension\#iphoneos-arm64-LinkMap.txt FBComposerLiteDestination &> Inputs/second.linkmap.objc
+buck run //fbobjc/Tools/appsize:compare_objects -- Inputs/ShareExtension\#iphoneos-arm64-LinkMap.txt FBComposerLiteUIRootPlugin &> Inputs/first.linkmap.objc
+buck run //fbobjc/Tools/appsize:compare_objects -- Inputs/ShareExtension\#iphoneos-arm64-LinkMap.txt FBComposerLiteStoriesPreview &> Inputs/third.linkmap.objc
+
+run
+ find Inputs -name "*thinlto.o" &> objc.filelist
+ find Inputs -name "*Swift.o" &> swift.filelist
+ ./amend-linkmap.sh
+
