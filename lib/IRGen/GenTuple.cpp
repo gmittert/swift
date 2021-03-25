@@ -231,7 +231,21 @@ namespace {
 
     TypeLayoutEntry *buildTypeLayoutEntry(IRGenModule &IGM,
                                           SILType T) const override {
-      return IGM.typeLayoutCache.getOrCreateScalarEntry(*this, T);
+      if (getFields().empty()) {
+        return IGM.typeLayoutCache.getEmptyEntry();
+      }
+
+      std::vector<TypeLayoutEntry *> fields;
+      for (auto &field : getFields()) {
+        auto fieldTy = field.getType(IGM, T);
+        fields.push_back(
+            field.getTypeInfo().buildTypeLayoutEntry(IGM, fieldTy));
+      }
+      if (fields.size() == 1) {
+        return fields[0];
+      }
+
+      return IGM.typeLayoutCache.getOrCreateAlignedGroupEntry(fields, 1, false);
     }
 
     llvm::NoneType getNonFixedOffsets(IRGenFunction &IGF) const {
@@ -260,7 +274,21 @@ namespace {
 
     TypeLayoutEntry *buildTypeLayoutEntry(IRGenModule &IGM,
                                           SILType T) const override {
-      return IGM.typeLayoutCache.getOrCreateScalarEntry(*this, T);
+      if (getFields().empty()) {
+        return IGM.typeLayoutCache.getEmptyEntry();
+      }
+
+      std::vector<TypeLayoutEntry *> fields;
+      for (auto &field : getFields()) {
+        auto fieldTy = field.getType(IGM, T);
+        fields.push_back(
+            field.getTypeInfo().buildTypeLayoutEntry(IGM, fieldTy));
+      }
+      if (fields.size() == 1) {
+        return fields[0];
+      }
+
+      return IGM.typeLayoutCache.getOrCreateAlignedGroupEntry(fields, 1, false);
     }
 
     llvm::NoneType getNonFixedOffsets(IRGenFunction &IGF) const {

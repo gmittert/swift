@@ -118,7 +118,7 @@ public:
 
   TypeLayoutEntry *buildTypeLayoutEntry(IRGenModule &IGM,
                                         SILType T) const override {
-    return IGM.typeLayoutCache.getOrCreateScalarEntry(*this, T);
+    return IGM.typeLayoutCache.getOrCreateTypeInfoBasedEntry(*this, T);
   }
 
   llvm::NoneType getNonFixedOffsets(IRGenFunction &IGF) const { return None; }
@@ -272,7 +272,7 @@ public:
 
   TypeLayoutEntry *buildTypeLayoutEntry(IRGenModule &IGM,
                                         SILType T) const override {
-    return IGM.typeLayoutCache.getOrCreateScalarEntry(*this, T);
+    return IGM.typeLayoutCache.getOrCreateTypeInfoBasedEntry(*this, T);
   }
 
   llvm::NoneType getNonFixedOffsets(IRGenFunction &IGF) const { return None; }
