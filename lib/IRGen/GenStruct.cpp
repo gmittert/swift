@@ -531,7 +531,7 @@ namespace {
     TypeLayoutEntry *buildTypeLayoutEntry(IRGenModule &IGM,
                                           SILType T) const override {
       if (getCXXDestructor(T) || !areFieldsABIAccessible()) {
-        return IGM.typeLayoutCache.getOrCreateScalarEntry(*this, T);
+        return IGM.typeLayoutCache.getOrCreateTypeInfoBasedEntry(*this, T);
       }
 
       std::vector<TypeLayoutEntry *> fields;

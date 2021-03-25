@@ -109,8 +109,8 @@ public struct Fixed<T> {
 // OPT:  [[T_PARAM:%.*]] = bitcast %swift.opaque* %object to i8*
 // OPT:  [[OFFSET:%.*]] = getelementptr inbounds i8, i8* [[T_PARAM]], i64 8
 // OPT:  [[CASTED:%.*]] = bitcast i8* [[OFFSET]] to %T30typelayout_based_value_witness1CC**
-// OPT:  %toDestroy = load %T30typelayout_based_value_witness1CC*, %T30typelayout_based_value_witness1CC** [[CASTED]], align 8
-// OPT:  [[FIELD:%.*]] = getelementptr %T30typelayout_based_value_witness1CC, %T30typelayout_based_value_witness1CC* %toDestroy, i64 0, i32 0
+// OPT:  [[TODESTROY:%.*]] = load %T30typelayout_based_value_witness1CC*, %T30typelayout_based_value_witness1CC** [[CASTED]], align 8
+// OPT:  [[FIELD:%.*]] = getelementptr %T30typelayout_based_value_witness1CC, %T30typelayout_based_value_witness1CC* [[TODESTROY]], i64 0, i32 0
 // OPT:  tail call void @swift_release(%swift.refcounted* [[FIELD]]) #6
 // OPT:  ret void
 // OPT:}
