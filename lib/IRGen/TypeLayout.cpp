@@ -12,16 +12,37 @@
 #include "TypeLayout.h"
 #include "EnumPayload.h"
 #include "FixedTypeInfo.h"
+#include "GenExistential.h"
 #include "GenOpaque.h"
+#include "GenType.h"
 #include "IRGen.h"
 #include "IRGenFunction.h"
 #include "IRGenModule.h"
 #include "SwitchBuilder.h"
 #include "swift/ABI/MetadataValues.h"
+#include "swift/SIL/TypeLowering.h"
 #include "llvm/IR/DerivedTypes.h"
 
 using namespace swift;
 using namespace irgen;
+
+static bool isNullableRefCounted(ScalarKind kind) {
+  switch (kind) {
+  case ScalarKind::ErrorReference:
+  case ScalarKind::NativeStrongReference:
+  case ScalarKind::NativeUnownedReference:
+  case ScalarKind::NativeWeakReference:
+  case ScalarKind::UnknownUnownedReference:
+  case ScalarKind::UnknownWeakReference:
+  case ScalarKind::UnknownReference:
+  case ScalarKind::BlockReference:
+  case ScalarKind::BridgeReference:
+  case ScalarKind::ObjCReference:
+    return true;
+  default:
+    return false;
+  }
+}
 
 TypeLayoutEntry::~TypeLayoutEntry() {}
 
@@ -691,12 +712,98 @@ llvm::Value *ScalarTypeLayoutEntry::isBitwiseTakable(IRGenFunction &IGF) const {
 }
 
 void ScalarTypeLayoutEntry::destroy(IRGenFunction &IGF, Address addr) const {
-  auto alignment = typeInfo.getFixedAlignment();
-  auto addressType = typeInfo.getStorageType()->getPointerTo();
-  auto &Builder = IGF.Builder;
-  addr =
-      Address(Builder.CreateBitCast(addr.getAddress(), addressType), alignment);
-  typeInfo.destroy(IGF, addr, representative, true);
+  switch (scalarKind) {
+  case ScalarKind::POD:
+    return;
+  case ScalarKind::Immovable:
+    llvm_unreachable("cannot opaquely manipulate immovable types!");
+  case ScalarKind::NativeStrongReference: {
+    auto alignment = typeInfo.getFixedAlignment();
+    auto addressType = typeInfo.getStorageType()->getPointerTo();
+    auto castAddr = IGF.Builder.CreateBitCast(addr.getAddress(), addressType);
+    llvm::Value *val = IGF.Builder.CreateLoad(castAddr, alignment);
+    IGF.emitNativeStrongRelease(val, IGF.getDefaultAtomicity());
+    return;
+  }
+  case ScalarKind::ErrorReference: {
+    auto alignment = typeInfo.getFixedAlignment();
+    auto addressType = typeInfo.getStorageType()->getPointerTo();
+    auto castAddr = IGF.Builder.CreateBitCast(addr.getAddress(), addressType);
+    llvm::Value *val = IGF.Builder.CreateLoad(castAddr, alignment);
+    IGF.emitErrorStrongRelease(val);
+    return;
+  }
+  case ScalarKind::NativeWeakReference: {
+    IGF.emitNativeWeakDestroy(addr);
+    return;
+  }
+  case ScalarKind::NativeUnownedReference: {
+    IGF.emitNativeUnownedDestroy(addr);
+    return;
+  }
+  case ScalarKind::BlockReference: {
+    IGF.emitBlockRelease(addr.getAddress());
+    return;
+  }
+  case ScalarKind::UnknownReference: {
+    auto alignment = typeInfo.getFixedAlignment();
+    auto addressType = typeInfo.getStorageType()->getPointerTo();
+    auto castAddr = IGF.Builder.CreateBitCast(addr.getAddress(), addressType);
+    llvm::Value *val = IGF.Builder.CreateLoad(castAddr, alignment);
+    IGF.emitUnknownStrongRelease(val, IGF.getDefaultAtomicity());
+    return;
+  }
+  case ScalarKind::UnknownUnownedReference: {
+    IGF.emitUnknownUnownedDestroy(addr);
+    return;
+  }
+  case ScalarKind::UnknownWeakReference: {
+    IGF.emitUnknownWeakDestroy(addr);
+    return;
+  }
+  case ScalarKind::BridgeReference: {
+    auto alignment = typeInfo.getFixedAlignment();
+    auto addressType = typeInfo.getStorageType()->getPointerTo();
+    auto castAddr = IGF.Builder.CreateBitCast(addr.getAddress(), addressType);
+    llvm::Value *val = IGF.Builder.CreateLoad(castAddr, alignment);
+    IGF.emitBridgeStrongRelease(val, IGF.getDefaultAtomicity());
+    return;
+  }
+  case ScalarKind::ObjCReference: {
+    auto alignment = typeInfo.getFixedAlignment();
+    auto addressType = typeInfo.getStorageType()->getPointerTo();
+    auto &Builder = IGF.Builder;
+    addr = Address(Builder.CreateBitCast(addr.getAddress(), addressType),
+                   alignment);
+    llvm::Value *val = IGF.Builder.CreateLoad(addr.getAddress(), alignment);
+    IGF.emitObjCStrongRelease(val);
+    break;
+  }
+  case ScalarKind::BlockStorage: {
+    // The frontend will currently never emit copy_addr or destroy_addr for
+    // block storage.
+    IGF.unimplemented(SourceLoc(), "destroying @block_storage");
+    return;
+  }
+  case ScalarKind::ThickFunc: {
+    // A thick function is a pair of a function pointer and an optional
+    // ref counted opaque pointer. We don't need to do anything for the
+    // function pointer, but we need to release the pointer.
+    auto alignment = typeInfo.getFixedAlignment();
+    auto addressType = typeInfo.getStorageType()->getPointerTo();
+    auto castAddr = IGF.Builder.CreateBitCast(addr.getAddress(), addressType);
+    auto secondElement = IGF.Builder.CreateStructGEP(
+        Address(castAddr, alignment), 1, IGF.IGM.getPointerSize(),
+        addr->getName() + ".data");
+    auto pointer = IGF.Builder.CreateLoad(secondElement);
+    IGF.emitNativeStrongRelease(pointer, IGF.getDefaultAtomicity());
+    return;
+  }
+  case ScalarKind::ExistentialReference: {
+    emitDestroyBoxedOpaqueExistentialBuffer(IGF, representative, addr);
+    return;
+  }
+  }
 }
 
 void ScalarTypeLayoutEntry::assignWithCopy(IRGenFunction &IGF, Address dest,
@@ -769,6 +876,10 @@ void ScalarTypeLayoutEntry::storeEnumTagSinglePayload(IRGenFunction &IGF,
       Address(Builder.CreateBitCast(addr.getAddress(), addressType), alignment);
   typeInfo.storeEnumTagSinglePayload(IGF, tag, numEmptyCases, addr,
                                      representative, true);
+}
+
+bool ScalarTypeLayoutEntry::classof(const TypeLayoutEntry *entry) {
+  return entry->kind == TypeLayoutEntryKind::Scalar;
 }
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
@@ -1173,6 +1284,10 @@ void AlignedGroupEntry::storeEnumTagSinglePayload(IRGenFunction &IGF,
       });
 }
 
+bool AlignedGroupEntry::classof(const TypeLayoutEntry *entry) {
+  return entry->kind == TypeLayoutEntryKind::AlignedGroup;
+}
+
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
 LLVM_DUMP_METHOD void AlignedGroupEntry::dump() const {
     llvm::dbgs() << "{ aligned group:\n";
@@ -1273,6 +1388,10 @@ void ArchetypeLayoutEntry::storeEnumTagSinglePayload(IRGenFunction &IGF,
               addr.getAlignment());
 
   emitStoreEnumTagSinglePayloadCall(IGF, archetype, tag, numEmptyCases, addr);
+}
+
+bool ArchetypeLayoutEntry::classof(const TypeLayoutEntry *entry) {
+  return entry->kind == TypeLayoutEntryKind::Archetype;
 }
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
@@ -1809,18 +1928,31 @@ void EnumTypeLayoutEntry::initializeMultiPayloadEnum(IRGenFunction &IGF,
 
 void EnumTypeLayoutEntry::destroySinglePayloadEnum(IRGenFunction &IGF,
                                                    Address addr) const {
-  // Check that there is a payload at the address.
-  llvm::BasicBlock *endBB = testSinglePayloadEnumContainsPayload(IGF, addr);
-  {
-    ConditionalDominanceScope condition(IGF);
-
-    // If there is, destroy it.
-    auto payload = cases[0];
-    payload->destroy(IGF, addr);
-
-    IGF.Builder.CreateBr(endBB);
+  auto payload = cases[0];
+  auto scalarLayout = llvm::dyn_cast<ScalarTypeLayoutEntry>(payload);
+  if (scalarLayout && scalarLayout->scalarKind == ScalarKind::POD) {
+    // Do Nothing
   }
-  IGF.Builder.emitBlock(endBB);
+  // If the payload is a single refcounted pointer and we have a single
+  // empty case, then the layout will be a nullable pointer, and we can
+  // pass enum values directly into swift_retain/swift_release as-is.
+  else if (scalarLayout && isNullableRefCounted(scalarLayout->scalarKind) && numEmptyCases == 1) {
+    // Since release can handle null pointers, we don't need to emit a test, we
+    // can just release
+    payload->destroy(IGF, addr);
+  } else {
+    // Check that there is a payload at the address.
+    llvm::BasicBlock *endBB = testSinglePayloadEnumContainsPayload(IGF, addr);
+    {
+      ConditionalDominanceScope condition(IGF);
+
+      // If there is, destroy it.
+      payload->destroy(IGF, addr);
+
+      IGF.Builder.CreateBr(endBB);
+    }
+    IGF.Builder.emitBlock(endBB);
+  }
 }
 
 void EnumTypeLayoutEntry::destroy(IRGenFunction &IGF, Address addr) const {
@@ -2261,6 +2393,10 @@ void EnumTypeLayoutEntry::destructiveInjectEnumTag(IRGenFunction &IGF,
   storeEnumTagMultipayload(IGF, tag, enumAddr);
 }
 
+bool EnumTypeLayoutEntry::classof(const TypeLayoutEntry *entry) {
+  return entry->kind == TypeLayoutEntryKind::Enum;
+}
+
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
 LLVM_DUMP_METHOD void EnumTypeLayoutEntry::dump() const {
     llvm::dbgs() << "{ enum emptycases: " << numEmptyCases << "\n";
@@ -2365,15 +2501,180 @@ void ResilientTypeLayoutEntry::storeEnumTagSinglePayload(
   emitStoreEnumTagSinglePayloadCall(IGF, ty, tag, numEmptyCases, addr);
 }
 
+bool ResilientTypeLayoutEntry::classof(const TypeLayoutEntry *entry) {
+  return entry->kind == TypeLayoutEntryKind::Resilient;
+}
+
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
 LLVM_DUMP_METHOD void ResilientTypeLayoutEntry::dump() const {
   llvm::dbgs() << "{ resilient type: " << ty << " id: " << this << " }\n";
 }
 #endif
 
-ScalarTypeLayoutEntry *
-TypeLayoutCache::getOrCreateScalarEntry(const TypeInfo &ti,
-                                        SILType representative) {
+void TypeInfoBasedTypeLayoutEntry::computeProperties() {
+  // does not add anything.
+}
+
+void TypeInfoBasedTypeLayoutEntry::Profile(llvm::FoldingSetNodeID &id) const {
+  ScalarTypeLayoutEntry::Profile(id, typeInfo, representative);
+}
+
+void TypeInfoBasedTypeLayoutEntry::Profile(llvm::FoldingSetNodeID &id,
+                                           const TypeInfo &ti, SILType ty) {
+  id.AddPointer(&ti);
+  id.AddPointer(ty.getASTType().getPointer());
+}
+
+TypeInfoBasedTypeLayoutEntry::~TypeInfoBasedTypeLayoutEntry() {}
+
+llvm::Value *
+TypeInfoBasedTypeLayoutEntry::alignmentMask(IRGenFunction &IGF) const {
+  assert(typeInfo.isFixedSize());
+  return typeInfo.getAlignmentMask(IGF, representative);
+}
+
+llvm::Value *TypeInfoBasedTypeLayoutEntry::size(IRGenFunction &IGF) const {
+  assert(typeInfo.isFixedSize());
+  return typeInfo.getSize(IGF, representative);
+}
+
+bool TypeInfoBasedTypeLayoutEntry::isFixedSize(IRGenModule& IGM) const {
+  return true;
+}
+
+llvm::Optional<Size> TypeInfoBasedTypeLayoutEntry::fixedSize(IRGenModule& IGM) const {
+  return typeInfo.getFixedSize();
+}
+
+llvm::Optional<Alignment> TypeInfoBasedTypeLayoutEntry::fixedAlignment(IRGenModule& IGM) const {
+  return typeInfo.getFixedAlignment();
+}
+
+llvm::Optional<uint32_t> TypeInfoBasedTypeLayoutEntry::fixedXICount(IRGenModule& IGM) const {
+  return typeInfo.getFixedExtraInhabitantCount(IGM);
+}
+
+llvm::Value *
+TypeInfoBasedTypeLayoutEntry::extraInhabitantCount(IRGenFunction &IGF) const {
+  assert(typeInfo.isFixedSize());
+  auto &IGM = IGF.IGM;
+  auto fixedXICount =
+      cast<FixedTypeInfo>(typeInfo).getFixedExtraInhabitantCount(IGM);
+  return llvm::ConstantInt::get(IGM.Int32Ty, fixedXICount);
+}
+
+llvm::Value *
+TypeInfoBasedTypeLayoutEntry::isBitwiseTakable(IRGenFunction &IGF) const {
+  assert(typeInfo.isFixedSize());
+  return llvm::ConstantInt::get(IGF.IGM.Int1Ty,
+                                cast<FixedTypeInfo>(typeInfo).isBitwiseTakable(
+                                    ResilienceExpansion::Maximal));
+}
+
+void TypeInfoBasedTypeLayoutEntry::destroy(IRGenFunction &IGF,
+                                           Address addr) const {
+  auto alignment = cast<FixedTypeInfo>(typeInfo).getFixedAlignment();
+  auto addressType = typeInfo.getStorageType()->getPointerTo();
+  auto &Builder = IGF.Builder;
+  addr =
+      Address(Builder.CreateBitCast(addr.getAddress(), addressType), alignment);
+  typeInfo.destroy(IGF, addr, representative, true);
+}
+
+void TypeInfoBasedTypeLayoutEntry::assignWithCopy(IRGenFunction &IGF,
+                                                  Address dest,
+                                                  Address src) const {
+  auto alignment = cast<FixedTypeInfo>(typeInfo).getFixedAlignment();
+  auto addressType = typeInfo.getStorageType()->getPointerTo();
+  auto &Builder = IGF.Builder;
+  dest =
+      Address(Builder.CreateBitCast(dest.getAddress(), addressType), alignment);
+  src =
+      Address(Builder.CreateBitCast(src.getAddress(), addressType), alignment);
+  typeInfo.assignWithCopy(IGF, dest, src, representative, true);
+}
+
+void TypeInfoBasedTypeLayoutEntry::assignWithTake(IRGenFunction &IGF,
+                                                  Address dest,
+                                                  Address src) const {
+  auto alignment = cast<FixedTypeInfo>(typeInfo).getFixedAlignment();
+  auto addressType = typeInfo.getStorageType()->getPointerTo();
+  auto &Builder = IGF.Builder;
+  dest =
+      Address(Builder.CreateBitCast(dest.getAddress(), addressType), alignment);
+  src =
+      Address(Builder.CreateBitCast(src.getAddress(), addressType), alignment);
+  typeInfo.assignWithTake(IGF, dest, src, representative, true);
+}
+
+void TypeInfoBasedTypeLayoutEntry::initWithCopy(IRGenFunction &IGF,
+                                                Address dest,
+                                                Address src) const {
+  auto alignment = cast<FixedTypeInfo>(typeInfo).getFixedAlignment();
+  auto addressType = typeInfo.getStorageType()->getPointerTo();
+  auto &Builder = IGF.Builder;
+  dest =
+      Address(Builder.CreateBitCast(dest.getAddress(), addressType), alignment);
+  src =
+      Address(Builder.CreateBitCast(src.getAddress(), addressType), alignment);
+  typeInfo.initializeWithCopy(IGF, dest, src, representative, true);
+}
+
+void TypeInfoBasedTypeLayoutEntry::initWithTake(IRGenFunction &IGF,
+                                                Address dest,
+                                                Address src) const {
+  auto alignment = cast<FixedTypeInfo>(typeInfo).getFixedAlignment();
+  auto addressType = typeInfo.getStorageType()->getPointerTo();
+  auto &Builder = IGF.Builder;
+  dest =
+      Address(Builder.CreateBitCast(dest.getAddress(), addressType), alignment);
+  src =
+      Address(Builder.CreateBitCast(src.getAddress(), addressType), alignment);
+  typeInfo.initializeWithTake(IGF, dest, src, representative, true);
+}
+
+llvm::Value *TypeInfoBasedTypeLayoutEntry::getEnumTagSinglePayload(
+    IRGenFunction &IGF, llvm::Value *numEmptyCases, Address value) const {
+  auto alignment = cast<FixedTypeInfo>(typeInfo).getFixedAlignment();
+  auto addressType = typeInfo.getStorageType()->getPointerTo();
+  auto &Builder = IGF.Builder;
+  value = Address(Builder.CreateBitCast(value.getAddress(), addressType),
+                  alignment);
+  ;
+  return typeInfo.getEnumTagSinglePayload(IGF, numEmptyCases, value,
+                                          representative, true);
+}
+
+void TypeInfoBasedTypeLayoutEntry::storeEnumTagSinglePayload(
+    IRGenFunction &IGF, llvm::Value *tag, llvm::Value *numEmptyCases,
+    Address addr) const {
+  auto alignment = cast<FixedTypeInfo>(typeInfo).getFixedAlignment();
+  auto addressType = typeInfo.getStorageType()->getPointerTo();
+  auto &Builder = IGF.Builder;
+  addr =
+      Address(Builder.CreateBitCast(addr.getAddress(), addressType), alignment);
+  typeInfo.storeEnumTagSinglePayload(IGF, tag, numEmptyCases, addr,
+                                     representative, true);
+}
+
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+LLVM_DUMP_METHOD void TypeInfoBasedTypeLayoutEntry::dump() const {
+  if (typeInfo.isFixedSize())
+    llvm::dbgs() << "{ scalar isFixedSize:" << (bool)typeInfo.isFixedSize()
+                 << " isLoadable: " << (bool)typeInfo.isLoadable() << " size: "
+                 << cast<FixedTypeInfo>(typeInfo).getFixedSize().getValue()
+                 << " alignment: "
+                 << cast<FixedTypeInfo>(typeInfo).getFixedAlignment().getValue()
+                 << " rep: " << representative << " id: " << this << " }\n";
+  if (!typeInfo.isFixedSize()) {
+    llvm::dbgs() << "{ scalar non-fixed rep: " << representative
+                 << " id: " << this << " }\n";
+  }
+}
+#endif
+
+ScalarTypeLayoutEntry *TypeLayoutCache::getOrCreateScalarEntry(
+    const TypeInfo &ti, SILType representative, ScalarKind kind) {
   assert(ti.isFixedSize());
   llvm::FoldingSetNodeID id;
   ScalarTypeLayoutEntry::Profile(id, cast<FixedTypeInfo>(ti), representative);
@@ -2385,7 +2686,7 @@ TypeLayoutCache::getOrCreateScalarEntry(const TypeInfo &ti,
   // Otherwise, create a new one.
   auto bytes = sizeof(ScalarTypeLayoutEntry);
   auto mem = bumpAllocator.Allocate(bytes, alignof(ScalarTypeLayoutEntry));
-  auto newEntry = new (mem) ScalarTypeLayoutEntry(cast<FixedTypeInfo>(ti), representative);
+  auto newEntry = new (mem) ScalarTypeLayoutEntry(cast<FixedTypeInfo>(ti), representative, kind);
   scalarEntries.InsertNode(newEntry, insertPos);
   newEntry->computeProperties();
   return newEntry;
@@ -2408,7 +2709,7 @@ TypeLayoutCache::getOrCreateArchetypeEntry(SILType archetype) {
 }
 
 AlignedGroupEntry *TypeLayoutCache::getOrCreateAlignedGroupEntry(
-    std::vector<TypeLayoutEntry *> &entries,
+    const std::vector<TypeLayoutEntry *> &entries,
     Alignment::int_type minimumAlignment) {
   llvm::FoldingSetNodeID id;
   AlignedGroupEntry::Profile(id, entries, minimumAlignment);
@@ -2461,6 +2762,26 @@ TypeLayoutCache::getOrCreateResilientEntry(SILType ty) {
   return newEntry;
 }
 
+TypeInfoBasedTypeLayoutEntry *
+TypeLayoutCache::getOrCreateTypeInfoBasedEntry(const TypeInfo &ti,
+                                               SILType representative) {
+  assert(ti.isFixedSize());
+  llvm::FoldingSetNodeID id;
+  TypeInfoBasedTypeLayoutEntry::Profile(id, ti, representative);
+  // Do we already have an entry.
+  void *insertPos;
+  if (auto *entry = typeInfoBasedEntries.FindNodeOrInsertPos(id, insertPos)) {
+    return entry;
+  }
+  // Otherwise, create a new one.
+  auto bytes = sizeof(ScalarTypeLayoutEntry);
+  auto mem = bumpAllocator.Allocate(bytes, alignof(ScalarTypeLayoutEntry));
+  auto newEntry = new (mem) TypeInfoBasedTypeLayoutEntry(cast<FixedTypeInfo>(ti), representative);
+  typeInfoBasedEntries.InsertNode(newEntry, insertPos);
+  newEntry->computeProperties();
+  return newEntry;
+}
+
 TypeLayoutCache::~TypeLayoutCache() {
   for (auto &entry : scalarEntries) {
     entry.~ScalarTypeLayoutEntry();
@@ -2476,5 +2797,8 @@ TypeLayoutCache::~TypeLayoutCache() {
   }
   for (auto &entry : resilientEntries) {
     entry.~ResilientTypeLayoutEntry();
+  }
+  for (auto &entry : typeInfoBasedEntries) {
+    entry.~TypeInfoBasedTypeLayoutEntry();
   }
 }
