@@ -14,6 +14,7 @@
 #define SWIFT_IRGEN_TYPE_LAYOUT_H
 
 #include "TypeInfo.h"
+#include "FixedTypeInfo.h"
 #include "swift/SIL/SILType.h"
 #include "llvm/ADT/FoldingSet.h"
 #include "llvm/Support/Debug.h"
@@ -62,6 +63,18 @@ public:
 
   virtual llvm::Value *alignmentMask(IRGenFunction &IGF) const;
   virtual llvm::Value *size(IRGenFunction &IGF) const;
+
+  /// Return the size of the type if known statically
+  virtual llvm::Optional<Size> fixedSize(IRGenModule& IGM) const;
+
+  /// Return if the size of the type if known statically
+  virtual bool isFixedSize(IRGenModule& IGM) const;
+
+  /// Return the alignment of the type if known statically
+  virtual llvm::Optional<Alignment> fixedAlignment(IRGenModule& IGM) const;
+
+  /// Return the number of extra inhabitants if known statically
+  virtual llvm::Optional<uint32_t> fixedXICount(IRGenModule& IGM) const;
   virtual llvm::Value *extraInhabitantCount(IRGenFunction &IGF) const;
   virtual llvm::Value *isBitwiseTakable(IRGenFunction &IGF) const;
 
@@ -122,10 +135,10 @@ protected:
 class ScalarTypeLayoutEntry : public TypeLayoutEntry,
                               public llvm::FoldingSetNode {
 public:
-  const TypeInfo &typeInfo;
+  const FixedTypeInfo &typeInfo;
   SILType representative;
 
-  ScalarTypeLayoutEntry(const TypeInfo &ti, SILType representative)
+  ScalarTypeLayoutEntry(const FixedTypeInfo &ti, SILType representative)
       : TypeLayoutEntry(TypeLayoutEntryKind::Scalar), typeInfo(ti),
         representative(representative) {}
 
@@ -140,6 +153,10 @@ public:
 
   llvm::Value *alignmentMask(IRGenFunction &IGF) const override;
   llvm::Value *size(IRGenFunction &IGF) const override;
+  llvm::Optional<Size> fixedSize(IRGenModule& IGM) const override;
+  bool isFixedSize(IRGenModule& IGM) const override;
+  llvm::Optional<Alignment> fixedAlignment(IRGenModule& IGM) const override;
+  llvm::Optional<uint32_t> fixedXICount(IRGenModule& IGM) const override;
   llvm::Value *extraInhabitantCount(IRGenFunction &IGF) const override;
   llvm::Value *isBitwiseTakable(IRGenFunction &IGF) const override;
 
@@ -187,6 +204,10 @@ public:
 
   llvm::Value *alignmentMask(IRGenFunction &IGF) const override;
   llvm::Value *size(IRGenFunction &IGF) const override;
+  llvm::Optional<Size> fixedSize(IRGenModule& IGM) const override;
+  bool isFixedSize(IRGenModule& IGM) const override;
+  llvm::Optional<Alignment> fixedAlignment(IRGenModule& IGM) const override;
+  llvm::Optional<uint32_t> fixedXICount(IRGenModule& IGM) const override;
   llvm::Value *extraInhabitantCount(IRGenFunction &IGF) const override;
   llvm::Value *isBitwiseTakable(IRGenFunction &IGF) const override;
 
@@ -233,6 +254,10 @@ public:
 
   llvm::Value *alignmentMask(IRGenFunction &IGF) const override;
   llvm::Value *size(IRGenFunction &IGF) const override;
+  llvm::Optional<Size> fixedSize(IRGenModule& IGM) const override;
+  bool isFixedSize(IRGenModule& IGM) const override;
+  llvm::Optional<Alignment> fixedAlignment(IRGenModule& IGM) const override;
+  llvm::Optional<uint32_t> fixedXICount(IRGenModule& IGM) const override;
   llvm::Value *extraInhabitantCount(IRGenFunction &IGF) const override;
   llvm::Value *isBitwiseTakable(IRGenFunction &IGF) const override;
 
@@ -264,13 +289,12 @@ public:
 class AlignedGroupEntry : public TypeLayoutEntry, public llvm::FoldingSetNode {
   std::vector<TypeLayoutEntry *> entries;
   Alignment::int_type minimumAlignment;
-  bool isFixedSize;
 
 public:
   AlignedGroupEntry(std::vector<TypeLayoutEntry *> &entries,
-                    Alignment::int_type minimumAlignment, bool isFixedSize)
+                    Alignment::int_type minimumAlignment)
       : TypeLayoutEntry(TypeLayoutEntryKind::AlignedGroup), entries(entries),
-        minimumAlignment(minimumAlignment), isFixedSize(isFixedSize) {}
+        minimumAlignment(minimumAlignment) {}
 
   ~AlignedGroupEntry();
 
@@ -280,10 +304,14 @@ public:
   void Profile(llvm::FoldingSetNodeID &id) const;
   static void Profile(llvm::FoldingSetNodeID &ID,
                       const std::vector<TypeLayoutEntry *> &entries,
-                      Alignment::int_type minimumAlignment, bool isFixedSize);
+                      Alignment::int_type minimumAlignment);
 
   llvm::Value *alignmentMask(IRGenFunction &IGF) const override;
   llvm::Value *size(IRGenFunction &IGF) const override;
+  llvm::Optional<Size> fixedSize(IRGenModule& IGM) const override;
+  bool isFixedSize(IRGenModule& IGM) const override;
+  llvm::Optional<Alignment> fixedAlignment(IRGenModule& IGM) const override;
+  llvm::Optional<uint32_t> fixedXICount(IRGenModule& IGM) const override;
   llvm::Value *extraInhabitantCount(IRGenFunction &IGF) const override;
   llvm::Value *isBitwiseTakable(IRGenFunction &IGF) const override;
 
@@ -348,6 +376,10 @@ public:
 
   llvm::Value *alignmentMask(IRGenFunction &IGF) const override;
   llvm::Value *size(IRGenFunction &IGF) const override;
+  llvm::Optional<Size> fixedSize(IRGenModule& IGM) const override;
+  bool isFixedSize(IRGenModule& IGM) const override;
+  llvm::Optional<Alignment> fixedAlignment(IRGenModule& IGM) const override;
+  llvm::Optional<uint32_t> fixedXICount(IRGenModule& IGM) const override;
   llvm::Value *extraInhabitantCount(IRGenFunction &IGF) const override;
   llvm::Value *isBitwiseTakable(IRGenFunction &IGF) const override;
 
@@ -459,8 +491,7 @@ public:
 
   AlignedGroupEntry *
   getOrCreateAlignedGroupEntry(std::vector<TypeLayoutEntry *> &entries,
-                               Alignment::int_type minimumAlignment,
-                               bool isFixedSize);
+                               Alignment::int_type minimumAlignment);
 
   EnumTypeLayoutEntry *
   getOrCreateEnumEntry(unsigned numEmptyCase,
