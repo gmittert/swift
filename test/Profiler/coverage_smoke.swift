@@ -18,6 +18,9 @@
 // REQUIRES: executable_test
 // REQUIRES: OS=macosx
 
+// T87280149
+// XFAIL: *
+
 // CHECK-INTERNAL: Functions shown: 1
 // CHECK-COV: {{ *}}[[@LINE+1]]|{{ *}}1{{.*}}func f_internal
 internal func f_internal() {}

@@ -14,6 +14,9 @@
 // REQUIRES: executable_test
 // REQUIRES: OS=macosx
 
+// T87280149
+// XFAIL: *
+
 public func bar(_ x: Int64) -> Int64 {
   if (x == 0) {
     return 42

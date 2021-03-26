@@ -17,6 +17,9 @@
 // REQUIRES: executable_test
 // REQUIRES: OS=macosx
 
+// T87280149
+// XFAIL: *
+
 // SIL-LABEL: // pgo_repeatwhile.guessWhile
 // SIL-LABEL: sil @$s15pgo_repeatwhile10guessWhile1xs5Int32VAE_tF : $@convention(thin) (Int32) -> Int32 !function_entry_count(42) {
 // IR-LABEL: define swiftcc i32 @"$s15pgo_repeatwhile10guessWhile1xs5Int32VAE_tF"

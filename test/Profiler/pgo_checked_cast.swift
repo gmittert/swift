@@ -19,6 +19,9 @@
 // REQUIRES: executable_test
 // REQUIRES: OS=macosx
 
+// T87280149
+// XFAIL: *
+
 // SIL-LABEL: // pgo_checked_cast.check1<A>(Any, A) -> A
 // SIL-LABEL: sil @$s16pgo_checked_cast6check1yxyp_xtlF : $@convention(thin) <T> (@in_guaranteed Any, @in_guaranteed T) -> @out T !function_entry_count(5001) {
 // IR-LABEL: define swiftcc i32 @$s6pgo_checked_cast6guess1s5Int32VAD1x_tF
