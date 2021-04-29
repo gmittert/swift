@@ -106,6 +106,14 @@ set(CMAKE_C_VISIBILITY_PRESET hidden)
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN YES)
 
+if(FACEBOOK)
+  # NOTE: this used to happen in the top level CMakeList.txt, but it makes
+  # impossible to create a universal compiler. However, because the stdlib does
+  # its own lipoing, we need to disable it here.
+  set(CMAKE_OSX_ARCHITECTURES "")
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "")
+endif()
+
 if(SWIFT_BUILD_RUNTIME_WITH_HOST_COMPILER)
   if(NOT "${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
     message(FATAL_ERROR "Building the swift runtime is not supported with ${CMAKE_C_COMPILER_ID}. Use the just-built clang instead.")

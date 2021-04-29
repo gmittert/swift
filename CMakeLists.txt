@@ -860,11 +860,16 @@ if(SWIFT_PARALLEL_LINK_JOBS)
   endif()
 endif()
 
+if (NOT FACEBOOK)
+# NOTE: the lines below make it impossible to create an universal compiler in
+# one CMake invocation. Upstream Swift relies in post-processing two builds,
+# but we don't want that.
 # Set the CMAKE_OSX_* variables in a way that minimizes conflicts.
 if("${CMAKE_SYSTEM_NAME}" STREQUAL "Darwin" AND NOT CMAKE_CROSSCOMPILING)
   set(CMAKE_OSX_SYSROOT "${SWIFT_SDK_${SWIFT_HOST_VARIANT_SDK}_PATH}")
   set(CMAKE_OSX_ARCHITECTURES "")
   set(CMAKE_OSX_DEPLOYMENT_TARGET "")
+endif()
 endif()
 
 if(SWIFT_INCLUDE_TOOLS)
