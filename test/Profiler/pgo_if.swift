@@ -16,9 +16,6 @@
 // REQUIRES: OS=macosx
 // REQUIRES: executable_test
 
-// T87280149
-// XFAIL: *
-
 // SIL-LABEL: // pgo_if.guess1
 // SIL-LABEL: sil @$s6pgo_if6guess11xs5Int32VAE_tF : $@convention(thin) (Int32) -> Int32 !function_entry_count(5001) {
 // IR-LABEL: define swiftcc i32 @"$s6pgo_if6guess11xs5Int32VAE_tF"

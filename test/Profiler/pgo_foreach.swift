@@ -20,9 +20,6 @@
 // REQUIRES: executable_test
 // REQUIRES: OS=macosx
 
-// T87280149
-// XFAIL: *
-
 // UNSUPPORTED: swift_test_mode_optimize_none_with_implicit_dynamic
 
 // SIL-LABEL: // pgo_foreach.guessForEach1

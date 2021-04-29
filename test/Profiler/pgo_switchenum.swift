@@ -21,9 +21,6 @@
 // REQUIRES: executable_test
 // REQUIRES: OS=macosx
 
-// T87280149
-// XFAIL: *
-
 public enum MaybePair {
   case Neither
   case Left(Int32)
