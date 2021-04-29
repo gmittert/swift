@@ -1,4 +1,4 @@
-// RUN: %target-run-simple-swift(-Xfrontend -enable-type-layout) --stdlib-unittest-in-process
+// RUN: %target-run-simple-swift(-g -Onone -Xfrontend -enable-type-layout) --stdlib-unittest-in-process
 
 // REQUIRES: executable_test
 
@@ -77,7 +77,7 @@ Tests.test("Nested Enum") {
     case EnumPayload(e: SinglePayload)
     case NoEnumPayload
   }
-  struct SingleEnumPayloadEnumStruct {
+  struct SingleEnumPayloadStruct {
     init(a: SingleEnumPayload, c: LifetimeTracked) {
       self.a = a
       self.c = c
@@ -85,9 +85,29 @@ Tests.test("Nested Enum") {
     let a: SingleEnumPayload
     let c: LifetimeTracked
   }
-  let _ = SinglePayloadEnumStruct(a: .EnumPayload(.Payload(c: LifetimeTracked(0)), c: LifetimeTracked(0)))
-  let _ = SinglePayloadEnumStruct(a: .EnumPayload(.NoPayload, c: LifetimeTracked(0)))
-  let _ = SinglePayloadEnumStruct(a: .NoEnumPayload, c: LifetimeTracked(0))
+  let _ = SingleEnumPayloadStruct(a: .EnumPayload(e: .Payload(c: LifetimeTracked(0))), c: LifetimeTracked(0))
+  let _ = SingleEnumPayloadStruct(a: .EnumPayload(e: .NoPayload), c: LifetimeTracked(0))
+  let _ = SingleEnumPayloadStruct(a: .NoEnumPayload, c: LifetimeTracked(0))
+}
+
+Tests.test("MultiEnum") {
+  enum MultiPayload {
+    case Payload1(c: LifetimeTracked)
+    case Payload2(c: LifetimeTracked, d: LifetimeTracked)
+    case NoPayload
+  }
+
+  struct MultiPayloadStruct {
+    init(a: MultiPayload, c: LifetimeTracked) {
+      self.a = a
+      self.c = c
+    }
+    let a: MultiPayload
+    let c: LifetimeTracked
+  }
+  let _ = MultiPayloadStruct(a: .Payload1(c: LifetimeTracked(0)), c: LifetimeTracked(0))
+  let _ = MultiPayloadStruct(a: .Payload2(c: LifetimeTracked(0), d: LifetimeTracked(0)), c: LifetimeTracked(0))
+  let _ = MultiPayloadStruct(a: .NoPayload, c: LifetimeTracked(0))
 }
 
 runAllTests()

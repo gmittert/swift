@@ -27,10 +27,15 @@
 #include "swift/IRGen/Linking.h"
 #include "swift/SIL/TypeLowering.h"
 #include "llvm/ADT/SmallString.h"
+<<<<<<< HEAD
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/Support/raw_ostream.h"
+=======
+>>>>>>> 84cc795bcdb (Compute Value Witness Destroy at Runtime)
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include "ConstantBuilder.h"
 #include "Explosion.h"
@@ -516,14 +521,16 @@ static void buildValueWitnessFunction(IRGenModule &IGM,
       if (IGM.getOptions().UseRuntimeValueWitnesses && layoutStr) {
         auto castAddr = IGF.Builder.CreateBitCast(object.getAddress(),
                                                   IGF.Builder.getInt8PtrTy());
-        llvm::SmallVector<llvm::Constant*, 8> values;
-        for (uint8_t byte: *layoutStr) {
+        llvm::SmallVector<llvm::Constant *, 8> values;
+        for (uint8_t byte : *layoutStr) {
           values.push_back(IGF.Builder.getInt8(byte));
         }
-        llvm::ArrayType *arrType = llvm::ArrayType::get(llvm::Type::getInt8Ty(IGM.getLLVMContext()), layoutStr->size());
-        llvm::Constant* arrayVal = llvm::ConstantArray::get(arrType, values);
-        llvm::GlobalVariable *layoutArray = new llvm::GlobalVariable(*IGM.getModule(),
-            arrType, true, llvm::GlobalValue::PrivateLinkage, arrayVal);
+        llvm::ArrayType *arrType = llvm::ArrayType::get(
+            llvm::Type::getInt8Ty(IGM.getLLVMContext()), layoutStr->size());
+        llvm::Constant *arrayVal = llvm::ConstantArray::get(arrType, values);
+        llvm::GlobalVariable *layoutArray = new llvm::GlobalVariable(
+            *IGM.getModule(), arrType, true, llvm::GlobalValue::PrivateLinkage,
+            arrayVal);
 
         auto castStr =
             IGF.Builder.CreateBitCast(layoutArray, IGF.Builder.getInt8PtrTy());
