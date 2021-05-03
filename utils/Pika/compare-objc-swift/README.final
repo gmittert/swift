@@ -52,6 +52,9 @@ Input: ShareExtension\#iphoneos-arm64-LinkMap.txt
 Inputs: objc.filelist swift.filelist and the list of object files
 -- for objc.filelist, we need to find the corresponding thinlto.o via the mapping entries under devirt-info
 
+This is now hard-coded to 3 swift modules in share extension.
+If we want to compare a different set of swift modules, objc.filelist and swift.filelist should only contain the object files for the set of swift modules. And we run compare_objects on the Swift/ObjC libraries, we then pass the list of result.
+
 Assuming three buck modules for ObjC and two buck modules for Swift:
 -- this needs Max's patch: P223076907 (can't find the diff number)
 -- we should improve this to handle multiple modules

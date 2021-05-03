@@ -14,15 +14,18 @@ mv Outputs/tmp-size.combined ttt
 python ./merge-section-obj.py ttt &> swift.combined
 rm Outputs/filelist.txt
 
+ls Inputs/*swift &> t.linkmap.swift
+ls Inputs/*objc &> t.linkmap.objc
 # accumulate size from linker map for the three modules
 # one extra linkmap file with monoLTO
 if [ "$1" == "mono" ]
 then
-cat Inputs/second.linkmap.swift Inputs/first.linkmap.swift Inputs/third.linkmap.swift Inputs/allswift.linkmap.swift | grep ':' | grep -v "PARSING" | grep -v "CREATING" | grep -v "BUILDING" &> ttt.swift
+# we need allswift.linkmap.swift
+cat `cat t.linkmap.swift` | grep ':' | grep -v "PARSING" | grep -v "CREATING" | grep -v "BUILDING" &> ttt.swift
 else
-cat Inputs/second.linkmap.swift Inputs/first.linkmap.swift Inputs/third.linkmap.swift | grep ':' | grep -v "PARSING" | grep -v "CREATING" | grep -v "BUILDING" &> ttt.swift
+cat `cat t.linkmap.swift` | grep ':' | grep -v "PARSING" | grep -v "CREATING" | grep -v "BUILDING" &> ttt.swift
 fi
-cat Inputs/second.linkmap.objc Inputs/first.linkmap.objc Inputs/third.linkmap.objc | grep ':' | grep -v "PARSING" | grep -v "CREATING" | grep -v "BUILDING" &> ttt.objc
+cat `cat t.linkmap.objc` | grep ':' | grep -v "PARSING" | grep -v "CREATING" | grep -v "BUILDING" &> ttt.objc
 grep ',' ttt.objc &> tmp.objc
 grep ',' ttt.swift &> tmp.swift
 python merge-section-linkmap.py tmp.swift &> combined.lm.swift
@@ -32,7 +35,8 @@ echo "--------------------------"
 echo "swift vs objc linkmap"
 python ./compare-section.py combined.lm.swift combined.lm.objc &> ttt
 echo "related sections in linker map"
-grep -E 'objc_ivarname|objc_methtype|objc_classname|objc_methname|objc_selref|__cstring' ttt | awk '{sum+=$2; sum2+=$3} END {print sum, sum2}'
+grep -E 'objc_ivarname|objc_methtype|objc_classname|objc_methname|objc_selref|__cstring' ttt | awk '{sum+=$2; sum2+=$3} END {print sum, sum2}' &> related.lm.tmp
+cat related.lm.tmp
 echo "sum of all sections in linker map"
 grep -v odrcov ttt | awk '{sum+=$2; sum2+=$3} END {print sum, sum2, sum/sum2}'
 echo "remove related sections in linker map"
@@ -49,7 +53,12 @@ echo "amended sections in linker map"
 # other.lm.tmp + related.obj.tmp
 paste other.lm.tmp related.obj.tmp | awk '{print $1+$3, $2+$4, ($1+$3)/($2+$4)}'
 
+echo "estimation using same size for related sections"
+awk '{print $1+$2}' related.lm.tmp &> t.tmp
+paste other.lm.tmp t.tmp | awk '{print $1+$3, $2+$3, ($1+$3)/($2+$3)}'
+
 echo "section comparison from linker map"
-awk '{print $1, $2, $3, $3-$2}' ttt | sort -n -k 4 | awk '$4!=0 {print $1,$2,$3,$4}' | grep -v odrcov | grep __text
+#awk '{print $1, $2, $3, $3-$2}' ttt | sort -n -k 4 | awk '$4!=0 {print $1,$2,$3,$4}' | grep -v odrcov | grep __text
+grep __text ttt | awk '{print $1, $2, $3, $2/$3}'
 
 rm *tmp* ttt* *combined*
