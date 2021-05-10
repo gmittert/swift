@@ -494,9 +494,11 @@ def parse_segments(path, arch):
     mangled_lines = mangled.splitlines()
     current_line_number = 0
 
-    for line in demangled.splitlines():
-        mangled_line = mangled_lines[current_line_number]
+    for line_b in demangled.splitlines():
+        mangled_line_b = mangled_lines[current_line_number]
         current_line_number += 1
+        line = line_b.decode('utf-8')
+        mangled_line= mangled_line_b.decode('utf-8')
 
         # Match a segment entry.
         segment_match = segment_regex.match(line)
