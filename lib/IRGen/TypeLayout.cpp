@@ -1574,7 +1574,6 @@ EnumTypeLayoutEntry::layoutString(IRGenFunction &IGF) const {
   }
   std::vector<uint8_t> layoutStr;
   if (isMultiPayloadEnum()) {
-    return llvm::NoneType::None;
     // MULTIENUM := 'E' SIZE SIZE SIZE+ VALUE+
     // E numEmptyPayloads numPayloads legnthOfEachPayload payloads
     layoutStr.push_back('E');
@@ -2930,6 +2929,7 @@ EnumTypeLayoutEntry *TypeLayoutCache::getOrCreateEnumEntry(
   if (auto *entry = enumEntries.FindNodeOrInsertPos(id, insertPos)) {
     return entry;
   }
+
   auto bytes = sizeof(EnumTypeLayoutEntry);
   auto mem = bumpAllocator.Allocate(bytes, alignof(EnumTypeLayoutEntry));
   auto newEntry = new (mem) EnumTypeLayoutEntry(numEmptyCases, nonEmptyCases);

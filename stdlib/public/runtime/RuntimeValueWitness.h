@@ -130,15 +130,21 @@ void swift_value_witness_destroy(void *address, const uint8_t *typeLayout,
 } // namespace swift
 
 struct BitVector {
-  std::vector<uint8_t> data;
+  std::vector<bool> data;
   BitVector() = default;
   BitVector(std::vector<uint8_t> values);
+
+  /// Return a bitvector which the given number of bytes set to all 0s
+  BitVector(size_t bits);
 
   /// Format as a String
   std::string asStr();
 
   /// Return the number of set bits in the bit vector
-  size_t count();
+  size_t count() const;
+
+  /// Append on a vector of bytes
+  void add(uint8_t values);
 
   /// Append on a vector of bytes
   void add(std::vector<uint8_t> values);
@@ -158,20 +164,36 @@ struct BitVector {
   /// Zero extend a bit vector to a given number of bits
   void zextTo(size_t numBits);
 
-  /// One extend a bit vector to a given number of bits
-  void oextTo(size_t numBits);
+  /// Truncate a bitvector to a given number of bits
+  void truncateTo(size_t numBits);
+
+  /// Extend or truncate a bitvector to a given number of bits
+  void zextOrTruncTo(size_t numBits);
+
+  /// Convert to a uint32_t
+  uint32_t toI32() const;
+
+  /// Apply the bit mask to an address
+  void maskBits(uint8_t *addr);
 
   /// Bitwise &= with another vector of the same length
-  BitVector &operator&=(const BitVector &other);
+  BitVector& operator&=(const BitVector& other);
+  BitVector operator+(const BitVector &other) const;
 
   /// Return a new bitvector that is the bitwise not of this one
   BitVector operator~() const;
 
   /// Number of extra inhabitants that fit into this vector
-  uint32_t countExtraInhabitants();
+  uint32_t countExtraInhabitants() const;
+
+  /// Pack masked bits into the low bits of an integer value.
+  /// Equivalent to a parallel bit extract instruction (PEXT)
+  uint32_t gatherBits(BitVector mask);
+
+  static BitVector getBitsSetFrom(uint32_t numBits, uint32_t loBits);
 };
 
-uint32_t indexFromExtraInhabitants(BitVector mask, BitVector value);
+uint32_t indexFromValue(BitVector mask, BitVector value, BitVector tagBits);
 
 uint32_t extractBits(BitVector mask, BitVector value);
 BitVector spareBits(const uint8_t *typeLayout, size_t layoutLength);
@@ -198,32 +220,32 @@ struct SinglePayloadEnum {
   uint8_t tagSize;
   uint8_t size;
 };
+
 struct MultiPayloadEnum {
   MultiPayloadEnum(uint32_t numEmptyPayloads,
                    std::vector<uint32_t> payloadLayoutLength,
-                   uint32_t payloadSize, uint32_t tagsInExtraInhabitants,
-                   BitVector spareBits, BitVector payloadSpareBits,
-                   std::vector<const uint8_t *> payloadLayoutPtr,
-                   uint8_t tagSize)
+                   BitVector payloadSpareBits, BitVector extraTagBitsSpareBits,
+                   std::vector<const uint8_t *> payloadLayoutPtr)
       : numEmptyPayloads(numEmptyPayloads),
         payloadLayoutLength(payloadLayoutLength),
-        payloadLayoutPtr(payloadLayoutPtr), payloadSize(payloadSize),
-        tagsInExtraInhabitants(tagsInExtraInhabitants), spareBits(spareBits),
-        payloadSpareBits(payloadSpareBits), tagSize(tagSize),
-        size(payloadSize + tagSize) {}
-  uint32_t numEmptyPayloads;
-  std::vector<uint32_t> payloadLayoutLength;
-  std::vector<const uint8_t *> payloadLayoutPtr;
-  uint32_t payloadSize;
-  uint32_t tagsInExtraInhabitants;
-  BitVector spareBits;
-  BitVector payloadSpareBits;
-  uint8_t tagSize;
-  uint8_t size;
+        payloadLayoutPtr(payloadLayoutPtr), payloadSpareBits(payloadSpareBits),
+        extraTagBitsSpareBits(extraTagBitsSpareBits) {}
+  const uint32_t numEmptyPayloads;
+  const std::vector<uint32_t> payloadLayoutLength;
+  const std::vector<const uint8_t *> payloadLayoutPtr;
+  const BitVector payloadSpareBits;
+  const BitVector extraTagBitsSpareBits;
+
+  uint32_t payloadSize() const;
+  BitVector spareBits() const;
+  uint32_t size() const;
+  uint32_t tagsInExtraInhabitants() const;
+  uint32_t gatherSpareBits(const uint8_t *data, unsigned firstBitOffset,
+                           unsigned resultBitWidth) const;
 };
-SinglePayloadEnum readSinglePayloadEnum(const uint8_t *typeLayout,
-                                        size_t &offset);
 MultiPayloadEnum readMultiPayloadEnum(const uint8_t *typeLayout,
                                       size_t &offset);
+SinglePayloadEnum readSinglePayloadEnum(const uint8_t *typeLayout,
+                                        size_t &offset);
 
 #endif // SWIFT_RUNTIME_VALUE_WITNESS_H

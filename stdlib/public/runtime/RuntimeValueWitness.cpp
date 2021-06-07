@@ -20,36 +20,78 @@
 #include "swift/Runtime/Error.h"
 #include "swift/Runtime/HeapObject.h"
 #include <Block.h>
+#include <bits/stdint-uintn.h>
 #include <cstdint>
 #include <iostream>
+#include <set>
 #include <sstream>
+#include <sys/types.h>
 
 using namespace swift;
 
+static uint8_t bitsToRepresent(uint32_t numValues) {
+  unsigned int r = 0;
+  while (numValues >>= 1) {
+    r++;
+  }
+  return r;
+}
+
+static uint8_t bytesToRepresent(uint32_t numValues) {
+  return (bitsToRepresent(numValues) + 7) / 8;
+}
+
 // A simple version of swift/Basic/ClusteredBitVector that doesn't use
 // llvm::APInt
-BitVector::BitVector(std::vector<uint8_t> values) { data = values; }
+BitVector::BitVector(std::vector<uint8_t> values) { add(values); }
+BitVector::BitVector(size_t bits) { data = std::vector<bool>(bits, 0); }
 
 std::string BitVector::asStr() {
   std::stringstream ss;
-  for (uint8_t byte : data) {
-    ss << std::hex << (uint32_t)byte << ",";
+  ss << std::hex;
+  int byteCounter = 0;
+  for (uint i = 0; i < data.size();) {
+    uint8_t byte = 0;
+    for (int j = 0; j < 8; j++) {
+      byte <<= 1;
+      byte |= data[i++];
+    }
+    byteCounter++;
+    if (byte < 0x10) {
+      ss << (uint32_t)0;
+    }
+    ss << (uint32_t)byte;
+    if (byteCounter % 2 == 0) {
+      ss << " ";
+    }
+    if (byteCounter % 4 == 0) {
+      ss << " ";
+    }
+    if (byteCounter % 8 == 0) {
+      ss << " ";
+    }
   }
   return ss.str();
 }
 
-size_t BitVector::count() {
+size_t BitVector::count() const {
   size_t total = 0;
-  for (uint8_t byte : data) {
-    total += ((byte & 1) == 0) + ((byte & 2) == 0) + ((byte & 4) == 0) +
-             ((byte & 8) == 0) + ((byte & 16) == 0) + ((byte & 32) == 0) +
-             ((byte & 64) == 0) + ((byte & 128) == 0);
+  for (auto bit : data) {
+    total += bit;
   }
   return total;
 }
 
+void BitVector::add(uint8_t byte) {
+  for (uint i = 0; i < 8; i++) {
+    data.push_back(byte >> (7 - i) & 0x1);
+  }
+}
+
 void BitVector::add(std::vector<uint8_t> values) {
-  data.insert(data.end(), values.begin(), values.end());
+  for (auto value : values) {
+    add(value);
+  }
 }
 
 void BitVector::add(BitVector v) {
@@ -57,8 +99,8 @@ void BitVector::add(BitVector v) {
 }
 
 bool BitVector::none() const {
-  for (uint8_t byte : data) {
-    if (byte != 0) {
+  for (bool bit : data) {
+    if (bit != 0) {
       return false;
     }
   }
@@ -68,37 +110,84 @@ bool BitVector::none() const {
 void BitVector::zextTo(size_t numBits) {
   if (numBits <= size())
     return;
-  add(std::vector<uint8_t>((numBits - size()) / 8, 0x00));
+  auto zeros = std::vector<bool>((numBits - size()), 0);
+  data.insert(data.begin(), zeros.begin(), zeros.end());
 }
 
-void BitVector::oextTo(size_t numBits) {
-  if (numBits <= size())
-    return;
-  add(std::vector<uint8_t>((numBits - size()) / 8, 0xFF));
+void BitVector::truncateTo(size_t numBits) {
+  auto other = std::vector<bool>(data.begin(), data.begin() + numBits);
+  data = other;
+}
+
+void BitVector::zextOrTruncTo(size_t numBits) {
+  if (numBits > size()) {
+    truncateTo(numBits);
+  } else {
+    zextTo(numBits);
+  }
 }
 
 bool BitVector::any() const { return !none(); }
 
-size_t BitVector::size() const { return data.size() * 8; }
+size_t BitVector::size() const { return data.size(); }
 
 BitVector &BitVector::operator&=(const BitVector &other) {
-  BitVector o = other;
-  if (o.size() < size()) {
-    o.oextTo(size());
-  } else {
-    oextTo(o.size());
-  }
-  for (uint i = 0; i < size() / 8; i++) {
-    data[i] &= o.data[i];
+  for (uint i = 0; i < size(); i++) {
+    data[i] = data[i] & other.data[i];
   }
   return *this;
 }
 
-uint32_t extractBits(BitVector mask, BitVector value) {
+BitVector BitVector::operator+(const BitVector &other) const {
+  BitVector bv = *this;
+  bv.data.insert(bv.data.end(), other.data.begin(), other.data.end());
+  return bv;
+}
+
+uint32_t BitVector::toI32() const {
+  uint32_t output = 0;
+  for (auto bit : data) {
+    output <<= 1;
+    output |= bit;
+  }
+  return output;
+}
+
+void BitVector::maskBits(uint8_t *addr) {
+  for (uint i = 0; i < 8; i++) {
+    std::cout << std::hex << (uint32_t)addr[i] << std::dec << std::endl;
+  }
+  uint8_t *ptr = addr;
+  std::vector<uint8_t> wordVec;
+  for (uint i = 0; i < data.size();) {
+    uint8_t byte = 0;
+    for (int j = 0; j < 8; j++) {
+      byte <<= 1;
+      byte |= data[i++];
+    }
+    wordVec.push_back(byte);
+    if (wordVec.size() == 8) {
+      for (auto byte = wordVec.rbegin(); byte != wordVec.rend(); byte++) {
+        *ptr = *ptr & *byte;
+        ptr++;
+      }
+      wordVec.clear();
+    }
+  }
+}
+
+uint32_t BitVector::gatherBits(BitVector mask) {
+  std::cout << "Val: " << asStr() << std::endl;
+  std::cout << "Mask: " << mask.asStr() << std::endl;
+  auto masked = *this;
+  masked &= mask;
+  std::cout << "Masked: " << masked.asStr() << std::endl;
+  assert(mask.size() == size());
+
   uint32_t output = 0;
   for (uint i = 0; i < mask.size() / 8; i++) {
     auto maskByte = mask.data[i];
-    auto valueByte = value.data[i];
+    auto valueByte = data[i];
     for (uint j = 0; j < 8; j++) {
       if ((maskByte & (1 << j)) != 0) {
         output <<= 1;
@@ -109,34 +198,50 @@ uint32_t extractBits(BitVector mask, BitVector value) {
   return output;
 }
 
-uint32_t indexFromExtraInhabitants(BitVector mask, BitVector value) {
-  // *Encoding the index in the extra inhabitants*
-  //
-  // Enums have an index from 0..n where n is the number of payload cases. To
-  // encode this in the spare bits of the value, we distinguish between the
-  // spare and non spare bits.
-  //
-  // As long as at least one spare bit is set, we do not have a payload, so we
-  // can also use the non spare bits to encode our index.
-  //
-  // The IRGen then tries to fit as many bits of the index into the non spare
-  // bits as possible, and puts the remaining into the spare bits (offsetting by
-  // 1 so there is always at least one bit set).
-  uint32_t setSpareBits = extractBits(mask, value);
-  uint32_t setNonSpareBits = extractBits(~mask, value);
-  uint32_t numNonSpareBitsUsed = std::min((~mask).count(), 31UL);
-  uint32_t topBits = (setSpareBits - 1) << numNonSpareBitsUsed;
-  return topBits | setNonSpareBits;
+uint32_t indexFromValue(BitVector mask, BitVector payload,
+                        BitVector extraTagBits) {
+  unsigned numSpareBits = mask.count();
+  uint32_t tag = 0;
+
+  // Get the tag bits from spare bits, if any.
+  if (numSpareBits > 0) {
+    tag = payload.gatherBits(mask);
+  }
+  std::cout << "Payload tag: " << std::hex << tag << std::endl;
+
+  // Merge the extra tag bits, if any.
+  if (extraTagBits.size() > 0) {
+    tag = (extraTagBits.toI32() << numSpareBits) | tag;
+    std::cout << "Merged extraTagBits: " << std::hex << tag << std::endl;
+  }
+  std::cout << "Result tag: " << std::hex << tag << std::endl;
+  return tag;
+}
+
+BitVector BitVector::getBitsSetFrom(uint32_t numBits, uint32_t lobits) {
+  BitVector bv;
+  uint8_t byte = 0;
+  while (numBits > 0) {
+    byte <<= 1;
+    if (numBits > lobits) {
+      byte |= 1;
+    }
+    numBits--;
+    if (numBits % 8 == 0) {
+      bv.add(byte);
+      byte = 0;
+    }
+  }
+  return bv;
 }
 
 BitVector BitVector::operator~() const {
-  BitVector result;
-  for (uint8_t byte : data) {
-    result.add({(uint8_t)~byte});
-  }
+  BitVector result = *this;
+  result.data.flip();
   return result;
 }
-uint32_t BitVector::countExtraInhabitants() {
+
+uint32_t BitVector::countExtraInhabitants() const {
   // Calculating Extra Inhabitants from Spare Bits:
   // If any of the spare bits is set, we have an extra in habitant.
   //
@@ -163,6 +268,12 @@ uint32_t BitVector::countExtraInhabitants() {
 
 /// Given a pointer and an offset, read the requested data and increment the
 /// offset
+uint8_t readBytes(const uint8_t *typeLayout, size_t &i) {
+  uint8_t returnVal = *(const uint8_t *)(typeLayout + i);
+  i += 1;
+  return returnVal;
+}
+
 template <typename T>
 T readBytes(const uint8_t *typeLayout, size_t &i) {
   T returnVal = *(const T *)(typeLayout + i);
@@ -180,19 +291,14 @@ SinglePayloadEnum readSinglePayloadEnum(const uint8_t *typeLayout,
   // e NumEmptyPayloads LengthOfPayload Payload
 
   // Read 'e'
-  std::cout << "Reading single payload enum" << std::endl;
   readBytes<uint8_t>(typeLayout, offset);
   uint32_t numEmptyPayloads = readBytes<uint32_t>(typeLayout, offset);
   uint32_t payloadLayoutLength = readBytes<uint32_t>(typeLayout, offset);
-  std::cout << "e{numEmptyPayloads: " << numEmptyPayloads
-            << "}{layoutLength: " << payloadLayoutLength << "}" << std::endl;
   const uint8_t *payloadLayoutPtr = typeLayout + offset;
   uint32_t payloadSize = computeSize(payloadLayoutPtr, payloadLayoutLength);
-  std::cout << "Payload size:" << payloadSize << std::endl;
 
   BitVector payloadSpareBits = spareBits(payloadLayoutPtr, payloadLayoutLength);
   uint32_t numExtraInhabitants = payloadSpareBits.countExtraInhabitants();
-  std::cout << "NumXI: " << std::hex << numExtraInhabitants << std::endl;
 
   uint32_t tagsInExtraInhabitants =
       std::min(numExtraInhabitants, numEmptyPayloads);
@@ -202,11 +308,9 @@ SinglePayloadEnum readSinglePayloadEnum(const uint8_t *typeLayout,
                     : spilledTags < UINT8_MAX  ? 1
                     : spilledTags < UINT16_MAX ? 2
                                                : 4;
-  std::cout << "Tag size: " << (uint32_t)tagSize << std::endl;
-  std::cout << "Spilled tags: " << spilledTags << std::endl;
   BitVector enumSpareBits = payloadSpareBits;
   for (uint i = 0; i < tagSize; i++) {
-    enumSpareBits.add({0x00});
+    enumSpareBits.add(0x00);
   }
   offset += payloadLayoutLength;
   return SinglePayloadEnum(numEmptyPayloads, payloadLayoutLength, payloadSize,
@@ -214,6 +318,9 @@ SinglePayloadEnum readSinglePayloadEnum(const uint8_t *typeLayout,
                            payloadSpareBits, payloadLayoutPtr, tagSize);
 }
 
+uint32_t MultiPayloadEnum::payloadSize() const {
+  return payloadSpareBits.size()/8;
+}
 MultiPayloadEnum readMultiPayloadEnum(const uint8_t *typeLayout,
                                       size_t &offset) {
   // // E numEmptyPayloads numPayloads lengthOfEachPayload payloads
@@ -226,20 +333,22 @@ MultiPayloadEnum readMultiPayloadEnum(const uint8_t *typeLayout,
   std::vector<uint32_t> payloadLengths;
   std::vector<const uint8_t *> payloadOffsets;
   std::vector<BitVector> casesSpareBits;
-  size_t payloadSize = 0;
   for (uint i = 0; i < numPayloads; i++) {
     payloadLengths.push_back(readBytes<uint32_t>(typeLayout, offset));
   }
   for (auto payloadLength : payloadLengths) {
     payloadOffsets.push_back(typeLayout + offset);
-    payloadSize =
-        std::max(payloadSize, computeSize(typeLayout + offset, payloadLength));
     casesSpareBits.push_back(spareBits(typeLayout + offset, payloadLength));
     offset += payloadLength;
   }
 
   BitVector payloadSpareBits;
   for (auto vec : casesSpareBits) {
+    if (vec.size() > payloadSpareBits.size()) {
+      payloadSpareBits.data.insert(
+          payloadSpareBits.data.end(),
+          vec.data.begin() + payloadSpareBits.data.size(), vec.data.end());
+    }
     payloadSpareBits &= vec;
   }
 
@@ -248,23 +357,33 @@ MultiPayloadEnum readMultiPayloadEnum(const uint8_t *typeLayout,
       std::min(numExtraInhabitants, numEmptyPayloads);
   uint32_t spilledTags = numEmptyPayloads - tagsInExtraInhabitants;
 
-  uint8_t tagSize = spilledTags == 0           ? 0
-                    : spilledTags < UINT8_MAX  ? 1
-                    : spilledTags < UINT16_MAX ? 2
-                                               : 4;
+  // round up to the nearest byte
+  uint8_t extraTagBytes = bytesToRepresent(spilledTags);
 
-  BitVector enumSpareBits = payloadSpareBits;
-  enumSpareBits.zextTo(enumSpareBits.size() + tagSize * 8);
+  BitVector extraTagBitsSpareBits(extraTagBytes);
+  // If we rounded up, those extra tag bits are spare.
+  for (int i = 0; i < extraTagBytes * 8 - bitsToRepresent(spilledTags); i++) {
+    extraTagBitsSpareBits.data[i] = 1;
+  }
 
-  return MultiPayloadEnum(numEmptyPayloads, payloadLengths, payloadSize,
-                          tagsInExtraInhabitants, enumSpareBits,
-                          payloadSpareBits, payloadOffsets, tagSize);
+  return MultiPayloadEnum(numEmptyPayloads, payloadLengths, payloadSpareBits,
+                          extraTagBitsSpareBits, payloadOffsets);
+}
+
+uint32_t MultiPayloadEnum::tagsInExtraInhabitants() const {
+  return std::min(payloadSpareBits.countExtraInhabitants(), numEmptyPayloads);
+}
+
+uint32_t MultiPayloadEnum::size() const { return spareBits().size() / 8; }
+
+BitVector MultiPayloadEnum::spareBits() const {
+  return payloadSpareBits + extraTagBitsSpareBits;
 }
 
 static BitVector pointerSpareBitMask() {
   // Only the bottom 56 bits are used, and heap objects are eight-byte-aligned.
   return BitVector(
-      std::vector<uint8_t>({0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF}));
+      std::vector<uint8_t>({0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07}));
 }
 
 size_t computeSize(const uint8_t *typeLayout, size_t layoutLength) {
@@ -319,7 +438,7 @@ size_t computeSize(const uint8_t *typeLayout, size_t layoutLength) {
       break;
     case LayoutType::MultiPayloadEnum: {
       MultiPayloadEnum e = readMultiPayloadEnum(typeLayout, offset);
-      addr += e.size;
+      addr += e.size();
       break;
     }
     case LayoutType::SinglePayloadEnum: {
@@ -354,12 +473,12 @@ BitVector spareBits(const uint8_t *typeLayout, size_t layoutLength) {
       uint64_t alignMask = shiftValue - 1;
       addr = ((uint64_t)addr + alignMask) & (~alignMask);
       for (uint j = 0; j < addr - addr_prev; j++) {
-        bitVector.add({0x0});
+        bitVector.add(0x0);
       }
       break;
     }
     case LayoutType::I8:
-      bitVector.add({0x00});
+      bitVector.add(0x00);
       addr += 1;
       offset++;
       break;
@@ -401,8 +520,8 @@ BitVector spareBits(const uint8_t *typeLayout, size_t layoutLength) {
     }
     case LayoutType::MultiPayloadEnum: {
       MultiPayloadEnum e = readMultiPayloadEnum(typeLayout, offset);
-      bitVector.add(e.spareBits);
-      addr += e.size;
+      bitVector.add(e.spareBits());
+      addr += e.size();
       break;
     }
     case LayoutType::SinglePayloadEnum: {
@@ -416,28 +535,61 @@ BitVector spareBits(const uint8_t *typeLayout, size_t layoutLength) {
   return bitVector;
 }
 
+uint32_t MultiPayloadEnum::gatherSpareBits(const uint8_t *data,
+                                           unsigned firstBitOffset,
+                                           unsigned resultBitWidth) const {
+  assert(false && "NYI");
+  return 0;
+}
+
+uint32_t extractPayloadTag(const MultiPayloadEnum e, const uint8_t *data) {
+  unsigned numSpareBits = e.spareBits().count();
+  unsigned usedExtraTagSpareBits = (~e.extraTagBitsSpareBits).count();
+  unsigned numTagBits = numSpareBits + usedExtraTagSpareBits;
+
+  // Round up to the nearest usual int size. Code gen only emits power of two
+  // byte sizes (i8, i16) and i1.
+  unsigned roundedTagBits = numTagBits == 0    ? 0
+                            : numTagBits <= 1  ? 1
+                            : numTagBits <= 8  ? 8
+                            : numTagBits <= 16 ? 16
+                                               : 32;
+
+  uint32_t tag = 0;
+
+  // Get the tag bits from spare bits, if any.
+  if (numSpareBits > 0) {
+    tag = e.gatherSpareBits(data, 0, roundedTagBits);
+  }
+
+  // Get the extra tag bits, if any.
+  if (e.extraTagBitsSpareBits.size() > 0) {
+    if (!tag) {
+      return e.extraTagBitsSpareBits.toI32();
+    } else {
+      uint32_t extraTagValue = 0;
+      if (e.extraTagBitsSpareBits.size() == 8) {
+        extraTagValue = *(const uint8_t *)data;
+      } else if (e.extraTagBitsSpareBits.size() == 16) {
+        extraTagValue = *(const uint16_t *)data;
+      } else if (e.extraTagBitsSpareBits.size() == 32) {
+        extraTagValue = *(const uint32_t *)data;
+      }
+
+      extraTagValue <<= numSpareBits;
+      tag |= extraTagValue;
+    }
+  }
+  return tag;
+}
+
 SWIFT_RUNTIME_EXPORT
 void swift::swift_value_witness_destroy(void *address,
                                         const uint8_t *typeLayout,
                                         uint32_t layoutLength) {
   uint8_t *addr = (uint8_t *)address;
   size_t offset = 0;
-  std::cout << "len: " << layoutLength << std::endl;
-  std::cout << "addr: " << addr << std::endl;
-  std::cout << "destroying: ";
-  for (uint i = 0; i < layoutLength; i++) {
-    if (typeLayout[i] < '0' || typeLayout[i] > 'z') {
-      std::cout << "{";
-      std::cout << (uint32_t)typeLayout[i++] << " ";
-      std::cout << (uint32_t)typeLayout[i++] << " ";
-      std::cout << (uint32_t)typeLayout[i++] << " ";
-      std::cout << (uint32_t)typeLayout[i];
-      std::cout << "}";
-    } else {
-      std::cout << typeLayout[i];
-    }
-  }
-  std::cout << std::endl;
+
   while (offset < layoutLength) {
     switch ((LayoutType)typeLayout[offset]) {
     case LayoutType::Align0:
@@ -471,37 +623,31 @@ void swift::swift_value_witness_destroy(void *address,
       offset++;
       break;
     case LayoutType::ErrorReference:
-      std::cout << "release addr: " << addr << std::endl;
       swift_errorRelease(*(SwiftError **)addr);
       addr += 8;
       offset++;
       break;
     case LayoutType::NativeStrongReference:
-      std::cout << "release addr: " << addr << std::endl;
       swift_release(*(HeapObject **)addr);
       addr += 8;
       offset++;
       break;
     case LayoutType::NativeUnownedReference:
-      std::cout << "release addr: " << addr << std::endl;
       swift_release(*(HeapObject **)addr);
       addr += 8;
       offset++;
       break;
     case LayoutType::NativeWeakReference:
-      std::cout << "release addr: " << addr << std::endl;
       swift_weakDestroy(*(WeakReference **)addr);
       addr += 8;
       offset++;
       break;
     case LayoutType::UnknownUnownedReference:
-      std::cout << "release addr: " << addr << std::endl;
       swift_unknownObjectUnownedDestroy(*(UnownedReference **)addr);
       addr += 8;
       offset++;
       break;
     case LayoutType::UnknownWeakReference:
-      std::cout << "release addr: " << addr << std::endl;
       swift_unknownObjectWeakDestroy(*(WeakReference **)addr);
       addr += 8;
       offset++;
@@ -512,7 +658,6 @@ void swift::swift_value_witness_destroy(void *address,
       offset++;
       break;
     case LayoutType::BridgeReference:
-      std::cout << "release addr: " << addr << std::endl;
       swift_bridgeObjectRelease(*(HeapObject **)addr);
       addr += 8;
       offset++;
@@ -525,25 +670,40 @@ void swift::swift_value_witness_destroy(void *address,
       break;
 #endif
     case LayoutType::ThickFunc:
-      std::cout << "release addr: " << addr << std::endl;
       swift_release(*((HeapObject **)addr + 1));
       addr += 16;
       offset++;
       break;
     case LayoutType::SinglePayloadEnum: {
-      std::cout << "Deleting enum" << std::endl;
       SinglePayloadEnum e = readSinglePayloadEnum(typeLayout, offset);
 
       if (e.tagsInExtraInhabitants > 0) {
-        std::cout << "Checking xi" << std::endl;
         BitVector masked;
-        for (uint i = 0; i < (e.payloadSize); i++) {
-          masked.add({addr[i]});
+        std::vector<uint8_t> wordVec;
+        for (uint i = 0; i < e.payloadSize; i++) {
+          wordVec.push_back(addr[i]);
+          if (wordVec.size() == 8) {
+            // The data we read will be in little endian, so we need to reverse it byte wise.
+            for (auto i = wordVec.rbegin(); i != wordVec.rend(); i++) {
+              masked.add(*i);
+            }
+            wordVec.clear();
+          }
         }
+
+        // If we don't have a multiple of 8 bytes, we need to top off
+        if (!wordVec.empty()) {
+          while (wordVec.size() < 8) {
+            wordVec.push_back(0);
+          }
+          for (auto i = wordVec.rbegin(); i != wordVec.rend(); i++) {
+            masked.add(*i);
+          }
+        }
+
         masked &= e.payloadSpareBits;
 
         if (masked.any()) {
-          std::cout << "XI set, no destroy" << std::endl;
           addr += e.size;
           break;
         }
@@ -553,77 +713,98 @@ void swift::swift_value_witness_destroy(void *address,
         uint8_t *tagPtr = addr + e.payloadSize;
         if (e.tagSize == 1) {
           if (*(uint8_t *)tagPtr != 0) {
-            std::cout << "tag set, no destroy" << std::endl;
             addr += e.size;
             break;
           }
         } else if (e.tagSize == 2) {
           if (*(uint16_t *)tagPtr != 0) {
-            std::cout << "tag set, no destroy" << std::endl;
             addr += e.size;
             break;
           }
         } else {
           if (*(uint32_t *)tagPtr != 0) {
-            std::cout << "tag set, no destroy" << std::endl;
             addr += e.size;
             break;
           }
         }
       }
 
-      std::cout << "die die die" << std::endl;
       swift::swift_value_witness_destroy((void *)addr, e.payloadLayoutPtr,
                                          e.payloadLayoutLength);
       addr += e.size;
       break;
     }
     case LayoutType::MultiPayloadEnum: {
-      MultiPayloadEnum e = readMultiPayloadEnum(typeLayout, offset);
+      std::cout << "got multi payload" << std::endl;
+      MultiPayloadEnum e =
+          readMultiPayloadEnum(typeLayout, offset);
       // numExtraInhabitants
+      std::cout << "readMultiEnum: E{numEmptyPayloads: " << e.numEmptyPayloads
+                << "}{numPayloads: " << e.payloadLayoutPtr.size() << "}{";
+      for (auto i : e.payloadLayoutLength) {
+        std::cout << (uint32_t)i << ",";
+      }
+      std::cout << "}\n";
+
+      std::cout << "Payload Size: " << std::hex << (uint32_t)e.payloadSize()
+                << std::endl;
 
       BitVector payloadBits;
-      for (uint i = 0; i < (e.payloadSize); i++) {
-        payloadBits.add({addr[i]});
-      }
-      if (e.tagsInExtraInhabitants >= 0) {
-        BitVector masked = payloadBits;
-        masked &= e.payloadSpareBits;
-
-        if (masked.any()) {
-          addr += e.size;
-          break;
+      std::vector<uint8_t> wordVec;
+      for (uint i = 0; i < e.payloadSize(); i++) {
+        wordVec.push_back(addr[i]);
+        if (wordVec.size() == 8) {
+          // The data we read will be in little endian, so we need to reverse it
+          // byte wise.
+          for (auto i = wordVec.rbegin(); i != wordVec.rend(); i++) {
+            payloadBits.add(*i);
+          }
+          wordVec.clear();
         }
       }
 
-      if (e.tagSize > 0) {
-        uint8_t *tagPtr = addr + e.payloadSize;
-        if (e.tagSize == 1) {
-          if (*(uint8_t *)tagPtr != 0) {
-            addr += e.size;
-            break;
-          }
-        } else if (e.tagSize == 2) {
-          if (*(uint16_t *)tagPtr != 0) {
-            addr += e.size;
-            break;
-          }
-        } else {
-          if (*(uint32_t *)tagPtr != 0) {
-            addr += e.size;
-            break;
-          }
+      // If we don't have a multiple of 8 bytes, we need to top off
+      if (!wordVec.empty()) {
+        while (wordVec.size() < 8) {
+          wordVec.push_back(0);
+        }
+        for (auto i = wordVec.rbegin(); i != wordVec.rend(); i++) {
+          payloadBits.add(*i);
         }
       }
 
-      size_t index = indexFromExtraInhabitants(e.payloadSpareBits, payloadBits);
-      swift::swift_value_witness_destroy((void *)addr,
-                                         e.payloadLayoutPtr[index],
-                                         e.payloadLayoutLength[index]);
-      addr += e.size;
+      std::cout << "Payload: " << payloadBits.asStr() << std::endl;
+
+      BitVector tagBits;
+      for (uint i = 0; i < (e.extraTagBitsSpareBits.count() / 8); i++) {
+        std::cout << std::hex << (uint32_t)addr[i] << " ";
+        tagBits.add(addr[i]);
+      }
+
+      // std::cout << "Getting index" << std::endl;
+      size_t index = indexFromValue(e.payloadSpareBits, payloadBits, tagBits);
+      std::cout << "Got index: " << index << std::endl;
+
+      // Enum indices count payload cases first, then non payload cases. Thus a
+      // payload index will always be in 0...numPayloadCases-1
+      if (index < e.payloadLayoutPtr.size()) {
+        std::cout << "Have a payload!" << std::endl;
+        std::cout << "Freeing!" << std::endl;
+
+        std::cout << "layout length: " << e.payloadLayoutLength[index] << std::endl;
+        std::cout << "layout ptr: " << e.payloadLayoutPtr[index] << std::endl;
+
+        std::cout << "addr: " << std::hex << *(uint64_t*) addr << std::endl;
+        (~e.spareBits()).maskBits(addr);
+        std::cout << "masked addr: " << std::hex << *(uint64_t*) addr << std::endl << std::dec;
+        swift::swift_value_witness_destroy((void *)addr,
+                                           e.payloadLayoutPtr[index],
+                                           e.payloadLayoutLength[index]);
+        std::cout << "Freed!" << std::endl;
+      }
+      addr += e.size();
       break;
     }
     }
   }
-  std::cout << "/destroying: " << std::endl;
 }

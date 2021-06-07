@@ -27,11 +27,6 @@
 #include "swift/IRGen/Linking.h"
 #include "swift/SIL/TypeLowering.h"
 #include "llvm/ADT/SmallString.h"
-<<<<<<< HEAD
-#include "llvm/IR/GlobalVariable.h"
-#include "llvm/Support/raw_ostream.h"
-=======
->>>>>>> 84cc795bcdb (Compute Value Witness Destroy at Runtime)
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"

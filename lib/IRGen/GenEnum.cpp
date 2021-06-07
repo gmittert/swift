@@ -3510,11 +3510,13 @@ namespace {
       if (!ElementsAreABIAccessible)
         return IGM.typeLayoutCache.getOrCreateResilientEntry(T);
 
-      if (AllowFixedLayoutOptimizations && TIK >= Loadable) {
-        // The type layout entry code does not handle spare bits atm.
-        return IGM.typeLayoutCache.getOrCreateTypeInfoBasedEntry(getTypeInfo(),
-                                                                 T);
-      }
+      /*
+            if (AllowFixedLayoutOptimizations && TIK >= Loadable) {
+              // The type layout entry code does not handle spare bits atm.
+              return
+         IGM.typeLayoutCache.getOrCreateTypeInfoBasedEntry(getTypeInfo(), T);
+            }
+            */
 
       unsigned emptyCases = ElementsWithNoPayload.size();
       std::vector<TypeLayoutEntry*> nonEmptyCases;
