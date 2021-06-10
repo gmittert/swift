@@ -327,6 +327,12 @@ public:
   /// vw functions instead of outlined copy/destroy functions.
   unsigned UseTypeLayoutValueHandling : 1;
 
+  /// Encodes type layouts into a string and interprets the layout in the Swift
+  /// runtime instead of generating code. Significantly reduces code size of
+  /// value witness functions in exchange for runtime overhead. Implies
+  /// UseTypeLayoutValueHandling
+  unsigned UseRuntimeValueWitnesses: 1;
+
   /// Instrument code to generate profiling information.
   unsigned GenerateProfile : 1;
 
@@ -394,6 +400,7 @@ public:
         LazyInitializeProtocolConformances(false), DisableLegacyTypeInfo(false),
         PrespecializeGenericMetadata(false), UseIncrementalLLVMCodeGen(true),
         UseTypeLayoutValueHandling(true),
+        UseRuntimeValueWitnesses(true),
         GenerateProfile(false), EnableDynamicReplacementChaining(false),
         DisableRoundTripDebugTypes(false), DisableDebuggerShadowCopies(false),
         DisableConcreteTypeMetadataMangledNameAccessors(false), CmdArgs(),

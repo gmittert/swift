@@ -752,6 +752,12 @@ def enable_type_layouts : Flag<["-"], "enable-type-layout">,
 def disable_type_layouts : Flag<["-"], "disable-type-layout">,
   HelpText<"Disable type layout based lowering">;
 
+def enable_runtime_value_witness : Flag<["-"], "enable-runtime-value-witness">,
+  HelpText<"Enable runtime value witnesses">;
+
+def disable_runtime_value_witness : Flag<["-"], "disable-runtime-value-witness">,
+  HelpText<"Disable runtime value witnesses">;
+
 def disable_interface_lockfile : Flag<["-"], "disable-interface-lock">,
   HelpText<"Don't lock interface file when building module">;
 
