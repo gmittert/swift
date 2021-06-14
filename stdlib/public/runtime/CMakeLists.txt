@@ -65,6 +65,7 @@ set(swift_runtime_sources
     RefCount.cpp
     ReflectionMirror.cpp
     RuntimeInvocationsTracking.cpp
+    RuntimeValueWitness.cpp
     SwiftDtoa.cpp)
 
 # Acknowledge that the following sources are known.
