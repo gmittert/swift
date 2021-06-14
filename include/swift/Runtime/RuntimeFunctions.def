@@ -1743,6 +1743,14 @@ FUNCTION(AutoDiffAllocateSubcontext,
          ARGS(RefCountedPtrTy, SizeTy),
          ATTRS(NoUnwind, ArgMemOnly))
 
+// void *swift_value_witness_destroy(void*, const char*, int32_t);
+FUNCTION(ValueWitnessDestroy,
+         swift_value_witness_destroy,
+         C_CC, AlwaysAvailable,
+         RETURNS(VoidTy),
+         ARGS(Int8PtrTy, Int8PtrTy, Int32Ty),
+         ATTRS(NoUnwind))
+
 #undef RETURNS
 #undef ARGS
 #undef ATTRS
