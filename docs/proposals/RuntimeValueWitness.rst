@@ -85,17 +85,54 @@ Aligned Group
 *************
 Structs are expressed as a group of values that have required alignments.
 ::
-   ALIGNED_GROUP:= (ALIGNMENT VALUE)+
+   SIZE := uint32
+   // a numFields (alignment,fieldLength,field)+
+   ALIGNED_GROUP:= 'a' SIZE (ALIGNMENT SIZE VALUE)+
    ALIGNMENT := '1'|'2'|'4'|'8'
 
 The Alignment attached to the structs indicates the number of bytes the struct should be aligned on.
 
-For example, to release an aligned group, we need to do the following:
+Note that because the alignment of an aligned group is the largest alignment
+of its subfields, aligned groups need to nest and sadly cannot be flattened. 
+
+For example:
 ::
-   destroy ALIGNED_GROUP:
-      for each (ALIGNMENT, VALUE) in ALIGNED_GROUP:
-          align address with ALIGNMENT
-          destroy VALUE
+   struct {
+      i: UInt8
+      struct {
+         j: UInt8
+         n: SomeClass
+      }
+   }
+Will align 64-bit align j, while   
+::
+   struct {
+      i: UInt8
+      j: UInt8
+      n: SomeClass
+   }
+Will 8-bit align j.
+
+Given the struct
+
+::
+   struct {
+      i: UInt8
+      struct {
+         j: UInt8
+         n: SomeClass
+      }
+   }
+
+We produce the type layout:
+::
+      2 fields in group
+      |         |-- byte aligned UInt8
+      v         V                  |-> 11 bytes of layout for the nested aligned group
+   a<0x00000002>1<0x00000001>b8<0x00000011>a<0x00000002>1<0x00000001>b8<0x00000001>N
+   ^              ^   |-> 1 byte field length 
+   |              |- nested aligned group, 64-bit aligned
+   |-aligned group 
 
 Enums
 *******

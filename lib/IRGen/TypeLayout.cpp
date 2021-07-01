@@ -1080,20 +1080,25 @@ llvm::Value *AlignedGroupEntry::isBitwiseTakable(IRGenFunction &IGF) const {
 
 llvm::Optional<std::vector<uint8_t>>
 AlignedGroupEntry::layoutString(IRGenFunction &IGF) const {
+  // a numFields (alignment,fieldLength,field)+
+  // ALIGNED_GROUP:= 'a' SIZE (ALIGNMENT SIZE VALUE)+
   std::vector<uint8_t> layoutStr;
   for (auto *entry : entries) {
-    llvm::Constant *alignmentVal =
-        dyn_cast<llvm::Constant>(entry->alignmentMask(IGF));
-    if (!alignmentVal) {
+    uint64_t alignmentMask;
+    if (entry->fixedAlignment(IGF.IGM)) {
+        alignmentMask = entry->fixedAlignment(IGF.IGM)->getMaskValue();
+    } else if (llvm::Constant *alignmentVal =
+                   dyn_cast<llvm::Constant>(entry->alignmentMask(IGF))) {
+      alignmentMask = alignmentVal->getUniqueInteger().getLimitedValue();
+    } else {
       return llvm::NoneType::None;
     }
-    uint64_t alignmentMask = alignmentVal->getUniqueInteger().getLimitedValue();
     switch (alignmentMask) {
     case (1 << 0) - 1:
       layoutStr.push_back('0');
       break;
     case (1 << 1) - 1:
-      layoutStr.push_back('0');
+      layoutStr.push_back('1');
       break;
     case (1 << 2) - 1:
       layoutStr.push_back('2');
@@ -1114,15 +1119,26 @@ AlignedGroupEntry::layoutString(IRGenFunction &IGF) const {
       layoutStr.push_back('7');
       break;
     default:
-      alignmentVal->dump();
       assert(false && "unknown alignment mask");
     }
     auto entryStr = entry->layoutString(IGF);
     if (!entryStr) {
       return llvm::NoneType::None;
     }
+    layoutStr.push_back(entryStr->size() >> 24);
+    layoutStr.push_back(entryStr->size() >> 16);
+    layoutStr.push_back(entryStr->size() >> 8);
+    layoutStr.push_back(entryStr->size());
     layoutStr.insert(layoutStr.end(), entryStr->begin(), entryStr->end());
   }
+  std::vector<uint8_t> header;
+  header.push_back('a');
+  uint32_t payloadLen = entries.size();
+  header.push_back(payloadLen >> 24);
+  header.push_back(payloadLen >> 16);
+  header.push_back(payloadLen >> 8);
+  header.push_back(payloadLen);
+  layoutStr.insert(layoutStr.begin(), header.begin(), header.end());
   return {layoutStr};
 }
 

@@ -185,14 +185,12 @@ uint32_t BitVector::gatherBits(BitVector mask) {
   assert(mask.size() == size());
 
   uint32_t output = 0;
-  for (uint i = 0; i < mask.size() / 8; i++) {
-    auto maskByte = mask.data[i];
-    auto valueByte = data[i];
-    for (uint j = 0; j < 8; j++) {
-      if ((maskByte & (1 << j)) != 0) {
-        output <<= 1;
-        output |= (valueByte >> j) & 0x01;
-      }
+  for (uint i = 0; i < mask.size(); i++) {
+    auto maskBit = mask.data[i];
+    auto valueBit = data[i];
+    if (maskBit) {
+      output <<= 1;
+      output |= valueBit;
     }
   }
   return output;
@@ -284,6 +282,23 @@ T readBytes(const uint8_t *typeLayout, size_t &i) {
   i += sizeof(T);
   return returnVal;
 }
+AlignedGroup readAlignedGroup(const uint8_t *typeLayout, size_t &offset) {
+  // a numFields (alignment,fieldLength,field)+
+  // ALIGNED_GROUP:= 'a' SIZE (ALIGNMENT SIZE VALUE)+
+  readBytes<uint8_t>(typeLayout, offset);
+  uint32_t numFields = readBytes<uint32_t>(typeLayout, offset);
+  std::vector<AlignedGroup::Field> fields;
+  std::cout << "Aligned group: " << numFields << " ";
+  for (uint i = 0; i < numFields; i++) {
+    uint8_t alignment = readBytes<uint8_t>(typeLayout, offset);
+    uint32_t layoutLen = readBytes<uint32_t>(typeLayout, offset);
+    fields.emplace_back(alignment, layoutLen, typeLayout+offset);
+    offset += layoutLen;
+    std::cout << "align: " << alignment << std::endl;
+    std::cout << "len: " << layoutLen << std::endl;
+  }
+  return AlignedGroup(fields);
+}
 
 SinglePayloadEnum readSinglePayloadEnum(const uint8_t *typeLayout,
                                         size_t &offset) {
@@ -297,7 +312,7 @@ SinglePayloadEnum readSinglePayloadEnum(const uint8_t *typeLayout,
   const uint8_t *payloadLayoutPtr = typeLayout + offset;
   uint32_t payloadSize = computeSize(payloadLayoutPtr, payloadLayoutLength);
 
-  BitVector payloadSpareBits = spareBits(payloadLayoutPtr, payloadLayoutLength);
+  BitVector payloadSpareBits = spareBits(payloadLayoutPtr, payloadLayoutLength).first;
   uint32_t numExtraInhabitants = payloadSpareBits.countExtraInhabitants();
 
   uint32_t tagsInExtraInhabitants =
@@ -338,7 +353,7 @@ MultiPayloadEnum readMultiPayloadEnum(const uint8_t *typeLayout,
   }
   for (auto payloadLength : payloadLengths) {
     payloadOffsets.push_back(typeLayout + offset);
-    casesSpareBits.push_back(spareBits(typeLayout + offset, payloadLength));
+    casesSpareBits.push_back(spareBits(typeLayout + offset, payloadLength).first);
     offset += payloadLength;
   }
 
@@ -391,17 +406,14 @@ size_t computeSize(const uint8_t *typeLayout, size_t layoutLength) {
   size_t offset = 0;
   while (offset < layoutLength) {
     switch ((LayoutType)typeLayout[offset]) {
-    case LayoutType::Align0:
-    case LayoutType::Align1:
-    case LayoutType::Align2:
-    case LayoutType::Align4:
-    case LayoutType::Align8:
-    case LayoutType::Align16:
-    case LayoutType::Align32:
-    case LayoutType::Align64: {
-      uint64_t shiftValue = uint64_t(1) << (typeLayout[offset++] - '0');
-      uint64_t alignMask = shiftValue - 1;
-      addr = ((uint64_t)addr + alignMask) & (~alignMask);
+    case LayoutType::AlignedGroup: {
+      AlignedGroup group = readAlignedGroup(typeLayout, offset);
+      for (auto field : group.fields) {
+        uint64_t shiftValue = uint64_t(1) << (field.alignment - '0');
+        uint64_t alignMask = shiftValue - 1;
+        addr = ((uint64_t)addr + alignMask) & (~alignMask);
+        addr += computeSize(field.fieldPtr, field.fieldLength);
+      }
       break;
     }
     case LayoutType::I8:
@@ -450,9 +462,10 @@ size_t computeSize(const uint8_t *typeLayout, size_t layoutLength) {
   }
   return addr;
 }
-
-BitVector spareBits(const uint8_t *typeLayout, size_t layoutLength) {
+  
+std::pair<BitVector, size_t> spareBits(const uint8_t *typeLayout, size_t layoutLength) {
   BitVector bitVector;
+  size_t spareBitsOffset = 0;
 
   uint64_t addr = 0;
   size_t offset = 0;
@@ -460,20 +473,16 @@ BitVector spareBits(const uint8_t *typeLayout, size_t layoutLength) {
   // favouring the earliest field in a tie.
   while (offset < layoutLength) {
     switch ((LayoutType)typeLayout[offset]) {
-    case LayoutType::Align0:
-    case LayoutType::Align1:
-    case LayoutType::Align2:
-    case LayoutType::Align4:
-    case LayoutType::Align8:
-    case LayoutType::Align16:
-    case LayoutType::Align32:
-    case LayoutType::Align64: {
-      uint64_t addr_prev = addr;
-      uint64_t shiftValue = uint64_t(1) << (typeLayout[offset++] - '0');
-      uint64_t alignMask = shiftValue - 1;
-      addr = ((uint64_t)addr + alignMask) & (~alignMask);
-      for (uint j = 0; j < addr - addr_prev; j++) {
-        bitVector.add(0x0);
+    case LayoutType::AlignedGroup: {
+      AlignedGroup a = readAlignedGroup(typeLayout, layoutLength);
+      std::pair<BitVector, size_t> groupSpareBits = a.spareBits();
+      bitVector = groupSpareBits.first;
+      spareBitsOffset = groupSpareBits.second;
+      for (auto field : a.fields) {
+        uint64_t shiftValue = uint64_t(1) << (field.alignment - '0');
+        uint64_t alignMask = shiftValue - 1;
+        addr = ((uint64_t)addr + alignMask) & (~alignMask);
+        addr += computeSize(field.fieldPtr, field.fieldLength);
       }
       break;
     }
@@ -532,12 +541,35 @@ BitVector spareBits(const uint8_t *typeLayout, size_t layoutLength) {
     }
     }
   }
-  return bitVector;
+  return {bitVector, spareBitsOffset};
+}
+
+
+std::pair<BitVector, size_t> AlignedGroup::spareBits() const {
+  size_t offset = 0;
+  size_t offsetOfBest = 0;
+  BitVector maskOfBest;
+
+  for (auto field : fields) {
+    std::pair<BitVector, size_t> fieldSpareBits = ::spareBits(field.fieldPtr, field.fieldLength);
+    if (fieldSpareBits.first.count() > maskOfBest.count()) {
+      offsetOfBest = offset + fieldSpareBits.second;
+      maskOfBest = fieldSpareBits.first;
+    }
+    uint64_t shiftValue = uint64_t(1) << (field.alignment - '0');
+    uint64_t alignMask = shiftValue - 1;
+    offset = ((uint64_t)offset + alignMask) & (~alignMask);
+    offset += computeSize(field.fieldPtr, field.fieldLength);
+  }
+  return {maskOfBest, offsetOfBest};
 }
 
 uint32_t MultiPayloadEnum::gatherSpareBits(const uint8_t *data,
                                            unsigned firstBitOffset,
                                            unsigned resultBitWidth) const {
+  // 1. Figure out where the spare bits are stored
+  //    a. figure out extra inhabitants of each subfield
+  // Figure out where the spare bits are stored
   assert(false && "NYI");
   return 0;
 }
@@ -592,18 +624,15 @@ void swift::swift_value_witness_destroy(void *address,
 
   while (offset < layoutLength) {
     switch ((LayoutType)typeLayout[offset]) {
-    case LayoutType::Align0:
-    case LayoutType::Align1:
-    case LayoutType::Align2:
-    case LayoutType::Align4:
-    case LayoutType::Align8:
-    case LayoutType::Align16:
-    case LayoutType::Align32:
-    case LayoutType::Align64: {
-      uint64_t shiftValue = uint64_t(1) << (typeLayout[offset] - '0');
-      uint64_t alignMask = shiftValue - 1;
-      addr = (uint8_t *)(((uint64_t)addr + alignMask) & (~alignMask));
-      offset++;
+    case LayoutType::AlignedGroup: {
+      AlignedGroup group = readAlignedGroup(typeLayout, offset);
+      for (auto field : group.fields) {
+        uint64_t shiftValue = uint64_t(1) << (field.alignment - '0');
+        uint64_t alignMask = shiftValue - 1;
+        addr = (uint8_t *)(((uint64_t)addr + alignMask) & (~alignMask));
+        swift_value_witness_destroy(addr, field.fieldPtr, field.fieldLength);
+        addr += computeSize(field.fieldPtr, field.fieldLength);
+      }
       break;
     }
     case LayoutType::I8:
@@ -756,8 +785,8 @@ void swift::swift_value_witness_destroy(void *address,
         if (wordVec.size() == 8) {
           // The data we read will be in little endian, so we need to reverse it
           // byte wise.
-          for (auto i = wordVec.rbegin(); i != wordVec.rend(); i++) {
-            payloadBits.add(*i);
+          for (auto j = wordVec.rbegin(); j != wordVec.rend(); j++) {
+            payloadBits.add(*j);
           }
           wordVec.clear();
         }
@@ -781,12 +810,12 @@ void swift::swift_value_witness_destroy(void *address,
         tagBits.add(addr[i]);
       }
 
-      // std::cout << "Getting index" << std::endl;
-      size_t index = indexFromValue(e.payloadSpareBits, payloadBits, tagBits);
+      uint32_t index = extractPayloadTag(e, addr);
       std::cout << "Got index: " << index << std::endl;
 
       // Enum indices count payload cases first, then non payload cases. Thus a
       // payload index will always be in 0...numPayloadCases-1
+      /*
       if (index < e.payloadLayoutPtr.size()) {
         std::cout << "Have a payload!" << std::endl;
         std::cout << "Freeing!" << std::endl;
@@ -794,14 +823,17 @@ void swift::swift_value_witness_destroy(void *address,
         std::cout << "layout length: " << e.payloadLayoutLength[index] << std::endl;
         std::cout << "layout ptr: " << e.payloadLayoutPtr[index] << std::endl;
 
-        std::cout << "addr: " << std::hex << *(uint64_t*) addr << std::endl;
+        std::cout << "addr: " << std::hex << *(uint64_t*) addr;
+        std::cout << " " << std::hex << *(((uint64_t*) addr)+1) << std::endl;
         (~e.spareBits()).maskBits(addr);
-        std::cout << "masked addr: " << std::hex << *(uint64_t*) addr << std::endl << std::dec;
+        std::cout << "masked addr: " << std::hex << *(uint64_t*) addr;
+        std::cout << " " << std::hex << *(((uint64_t*) addr)+1) << std::endl << std::dec;
         swift::swift_value_witness_destroy((void *)addr,
                                            e.payloadLayoutPtr[index],
                                            e.payloadLayoutLength[index]);
         std::cout << "Freed!" << std::endl;
       }
+      */
       addr += e.size();
       break;
     }

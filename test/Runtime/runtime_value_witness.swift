@@ -34,6 +34,44 @@ Tests.test("AlignedStruct") {
   let _ = AlignedStruct(a: 0xAA, b: 0xBBBB, c: LifetimeTracked(0))
 }
 
+Tests.test("NestedStruct") {
+  struct NestedStruct {
+    init(a: UInt8, b: LifetimeTracked) {
+      self.a = a
+      self.b = b
+    }
+    let a: UInt8
+    let b: LifetimeTracked
+  }
+  struct OuterStruct {
+    init(a: UInt8, b: NestedStruct) {
+      self.a = a
+      self.b = b
+    }
+    let a: UInt8
+    let b: NestedStruct
+  }
+  // We should expect to see a layout of AA00000000000000 BB00000000000000 POINTER
+  // As the nested struct, and thus b, will be pointer aligned
+  let _ = OuterStruct(a: 0xAA, b: NestedStruct(a: 0xBB, b: LifetimeTracked(0)))
+}
+
+Tests.test("FlattenedStruct") {
+  struct FlattenedStruct {
+    init(a: UInt8, b: UInt8, c: LifetimeTracked) {
+      self.a = a
+      self.b = b
+      self.c = c
+    }
+    let a: UInt8
+    let b: UInt8
+    let c: LifetimeTracked
+  }
+  // We should expect to see a layout of AABB000000000000 POINTER
+  // As the layout should pack a and b.
+  let _ = FlattenedStruct(a: 0xAA, b: 0xBB, c: LifetimeTracked(0))
+}
+
 Tests.test("NoPayloadEnumStruct") {
   enum NoPayload {
     case Only
@@ -101,6 +139,8 @@ Tests.test("MultiEnum") {
     case Payload7(c: LifetimeTracked, d: LifetimeTracked)
     case Payload8(c: LifetimeTracked, d: LifetimeTracked)
     case Payload9(c: LifetimeTracked, d: LifetimeTracked)
+    case Payload10(c: LifetimeTracked, d: LifetimeTracked, e: LifetimeTracked)
+    case Payload11(c: LifetimeTracked, d: LifetimeTracked, e: LifetimeTracked, f: UInt64)
     case NoPayload
     case NoPayload2
     case NoPayload3
@@ -116,18 +156,20 @@ Tests.test("MultiEnum") {
     let c: LifetimeTracked
   }
   let _ = MultiPayloadStruct(a: .Payload1(c: LifetimeTracked(0)), c: LifetimeTracked(0))
-//let _ = MultiPayloadStruct(a: .Payload2(c: LifetimeTracked(0), d: LifetimeTracked(0)), c: LifetimeTracked(0))
-//let _ = MultiPayloadStruct(a: .Payload3(c: LifetimeTracked(0), d: LifetimeTracked(0)), c: LifetimeTracked(0))
-//let _ = MultiPayloadStruct(a: .Payload4(c: LifetimeTracked(0), d: LifetimeTracked(0)), c: LifetimeTracked(0))
-//let _ = MultiPayloadStruct(a: .Payload5(c: LifetimeTracked(0), d: LifetimeTracked(0)), c: LifetimeTracked(0))
-//let _ = MultiPayloadStruct(a: .Payload6(c: LifetimeTracked(0), d: LifetimeTracked(0)), c: LifetimeTracked(0))
-//let _ = MultiPayloadStruct(a: .Payload7(c: LifetimeTracked(0), d: LifetimeTracked(0)), c: LifetimeTracked(0))
-//let _ = MultiPayloadStruct(a: .Payload8(c: LifetimeTracked(0), d: LifetimeTracked(0)), c: LifetimeTracked(0))
-//let _ = MultiPayloadStruct(a: .Payload9(c: LifetimeTracked(0), d: LifetimeTracked(0)), c: LifetimeTracked(0))
-//let _ = MultiPayloadStruct(a: .NoPayload, c: LifetimeTracked(0))
-//let _ = MultiPayloadStruct(a: .NoPayload2, c: LifetimeTracked(0))
-//let _ = MultiPayloadStruct(a: .NoPayload3, c: LifetimeTracked(0))
-//let _ = MultiPayloadStruct(a: .NoPayload4, c: LifetimeTracked(0))
+  let _ = MultiPayloadStruct(a: .Payload2(c: LifetimeTracked(0), d: LifetimeTracked(0)), c: LifetimeTracked(0))
+  let _ = MultiPayloadStruct(a: .Payload3(c: LifetimeTracked(0), d: LifetimeTracked(0)), c: LifetimeTracked(0))
+  let _ = MultiPayloadStruct(a: .Payload4(c: LifetimeTracked(0), d: LifetimeTracked(0)), c: LifetimeTracked(0))
+  let _ = MultiPayloadStruct(a: .Payload5(c: LifetimeTracked(0), d: LifetimeTracked(0)), c: LifetimeTracked(0))
+  let _ = MultiPayloadStruct(a: .Payload6(c: LifetimeTracked(0), d: LifetimeTracked(0)), c: LifetimeTracked(0))
+  let _ = MultiPayloadStruct(a: .Payload7(c: LifetimeTracked(0), d: LifetimeTracked(0)), c: LifetimeTracked(0))
+  let _ = MultiPayloadStruct(a: .Payload8(c: LifetimeTracked(0), d: LifetimeTracked(0)), c: LifetimeTracked(0))
+  let _ = MultiPayloadStruct(a: .Payload9(c: LifetimeTracked(0), d: LifetimeTracked(0)), c: LifetimeTracked(0))
+  let _ = MultiPayloadStruct(a: .Payload10(c: LifetimeTracked(0), d: LifetimeTracked(0), e: LifetimeTracked(0)), c: LifetimeTracked(0))
+  let _ = MultiPayloadStruct(a: .Payload11(c: LifetimeTracked(0), d: LifetimeTracked(0), e: LifetimeTracked(0), f: 0xAAAAAAAAAAAAAAAA), c: LifetimeTracked(0))
+  let _ = MultiPayloadStruct(a: .NoPayload, c: LifetimeTracked(0))
+  let _ = MultiPayloadStruct(a: .NoPayload2, c: LifetimeTracked(0))
+  let _ = MultiPayloadStruct(a: .NoPayload3, c: LifetimeTracked(0))
+  let _ = MultiPayloadStruct(a: .NoPayload4, c: LifetimeTracked(0))
 }
 
 runAllTests()

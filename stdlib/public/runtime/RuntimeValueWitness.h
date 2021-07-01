@@ -114,14 +114,7 @@ enum class LayoutType : char {
   // e{emptycases}{num_cases}{payload1}{payload2}{...}{payloadn}
   SinglePayloadEnum = 'e',
   MultiPayloadEnum = 'E',
-  Align0 = '0',
-  Align1 = '1',
-  Align2 = '2',
-  Align4 = '3',
-  Align8 = '4',
-  Align16 = '5',
-  Align32 = '6',
-  Align64 = '7',
+  AlignedGroup = 'a',
 };
 
 SWIFT_RUNTIME_EXPORT
@@ -196,8 +189,25 @@ struct BitVector {
 uint32_t indexFromValue(BitVector mask, BitVector value, BitVector tagBits);
 
 uint32_t extractBits(BitVector mask, BitVector value);
-BitVector spareBits(const uint8_t *typeLayout, size_t layoutLength);
+/// Get the sparebits mask and the offset that it's located at
+std::pair<BitVector,uint64_t> spareBits(const uint8_t *typeLayout, size_t layoutLength);
 size_t computeSize(const uint8_t *typeLayout, size_t layoutLength);
+
+struct AlignedGroup {
+  struct Field {
+    Field(uint8_t alignment,
+    uint32_t fieldLength,
+    const uint8_t* fieldPtr): alignment(alignment), fieldLength(fieldLength), fieldPtr(fieldPtr){}
+    uint8_t alignment;
+    uint32_t fieldLength;
+    const uint8_t* fieldPtr;
+  };
+  AlignedGroup(std::vector<AlignedGroup::Field> fields)
+      : fields(fields) {}
+  std::vector<Field> fields;
+
+  std::pair<BitVector, size_t> spareBits() const;
+};
 
 struct SinglePayloadEnum {
   SinglePayloadEnum(uint32_t numEmptyPayloads, uint32_t payloadLayoutLength,
@@ -243,6 +253,8 @@ struct MultiPayloadEnum {
   uint32_t gatherSpareBits(const uint8_t *data, unsigned firstBitOffset,
                            unsigned resultBitWidth) const;
 };
+AlignedGroup readAlignedGroup(const uint8_t *typeLayout,
+                                      size_t &offset);
 MultiPayloadEnum readMultiPayloadEnum(const uint8_t *typeLayout,
                                       size_t &offset);
 SinglePayloadEnum readSinglePayloadEnum(const uint8_t *typeLayout,
