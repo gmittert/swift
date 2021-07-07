@@ -30,7 +30,7 @@
 using namespace swift;
 
 static uint8_t bitsToRepresent(uint32_t numValues) {
-  unsigned int r = 0;
+  unsigned int r = 1;
   while (numValues >>= 1) {
     r++;
   }
@@ -46,7 +46,7 @@ static uint8_t bytesToRepresent(uint32_t numValues) {
 BitVector::BitVector(std::vector<uint8_t> values) { add(values); }
 BitVector::BitVector(size_t bits) { data = std::vector<bool>(bits, 0); }
 
-std::string BitVector::asStr() {
+std::string BitVector::asStr() const {
   std::stringstream ss;
   ss << std::hex;
   int byteCounter = 0;
@@ -154,9 +154,6 @@ uint32_t BitVector::toI32() const {
 }
 
 void BitVector::maskBits(uint8_t *addr) {
-  for (uint i = 0; i < 8; i++) {
-    std::cout << std::hex << (uint32_t)addr[i] << std::dec << std::endl;
-  }
   uint8_t *ptr = addr;
   std::vector<uint8_t> wordVec;
   for (uint i = 0; i < data.size();) {
@@ -177,11 +174,8 @@ void BitVector::maskBits(uint8_t *addr) {
 }
 
 uint32_t BitVector::gatherBits(BitVector mask) {
-  std::cout << "Val: " << asStr() << std::endl;
-  std::cout << "Mask: " << mask.asStr() << std::endl;
   auto masked = *this;
   masked &= mask;
-  std::cout << "Masked: " << masked.asStr() << std::endl;
   assert(mask.size() == size());
 
   uint32_t output = 0;
@@ -205,14 +199,11 @@ uint32_t indexFromValue(BitVector mask, BitVector payload,
   if (numSpareBits > 0) {
     tag = payload.gatherBits(mask);
   }
-  std::cout << "Payload tag: " << std::hex << tag << std::endl;
 
   // Merge the extra tag bits, if any.
   if (extraTagBits.size() > 0) {
     tag = (extraTagBits.toI32() << numSpareBits) | tag;
-    std::cout << "Merged extraTagBits: " << std::hex << tag << std::endl;
   }
-  std::cout << "Result tag: " << std::hex << tag << std::endl;
   return tag;
 }
 
@@ -288,14 +279,11 @@ AlignedGroup readAlignedGroup(const uint8_t *typeLayout, size_t &offset) {
   readBytes<uint8_t>(typeLayout, offset);
   uint32_t numFields = readBytes<uint32_t>(typeLayout, offset);
   std::vector<AlignedGroup::Field> fields;
-  std::cout << "Aligned group: " << numFields << " ";
   for (uint i = 0; i < numFields; i++) {
     uint8_t alignment = readBytes<uint8_t>(typeLayout, offset);
     uint32_t layoutLen = readBytes<uint32_t>(typeLayout, offset);
     fields.emplace_back(alignment, layoutLen, typeLayout+offset);
     offset += layoutLen;
-    std::cout << "align: " << alignment << std::endl;
-    std::cout << "len: " << layoutLen << std::endl;
   }
   return AlignedGroup(fields);
 }
@@ -312,7 +300,7 @@ SinglePayloadEnum readSinglePayloadEnum(const uint8_t *typeLayout,
   const uint8_t *payloadLayoutPtr = typeLayout + offset;
   uint32_t payloadSize = computeSize(payloadLayoutPtr, payloadLayoutLength);
 
-  BitVector payloadSpareBits = spareBits(payloadLayoutPtr, payloadLayoutLength).first;
+  BitVector payloadSpareBits = spareBits(payloadLayoutPtr, payloadLayoutLength);
   uint32_t numExtraInhabitants = payloadSpareBits.countExtraInhabitants();
 
   uint32_t tagsInExtraInhabitants =
@@ -334,7 +322,11 @@ SinglePayloadEnum readSinglePayloadEnum(const uint8_t *typeLayout,
 }
 
 uint32_t MultiPayloadEnum::payloadSize() const {
-  return payloadSpareBits.size()/8;
+  size_t maxSize = 0;
+  for (uint i = 0; i < payloadLayoutPtr.size(); i++) {
+    maxSize = std::max(maxSize, computeSize(payloadLayoutPtr[i], payloadLayoutLength[i]));
+  }
+  return maxSize;
 }
 MultiPayloadEnum readMultiPayloadEnum(const uint8_t *typeLayout,
                                       size_t &offset) {
@@ -353,7 +345,7 @@ MultiPayloadEnum readMultiPayloadEnum(const uint8_t *typeLayout,
   }
   for (auto payloadLength : payloadLengths) {
     payloadOffsets.push_back(typeLayout + offset);
-    casesSpareBits.push_back(spareBits(typeLayout + offset, payloadLength).first);
+    casesSpareBits.push_back(spareBits(typeLayout + offset, payloadLength));
     offset += payloadLength;
   }
 
@@ -381,18 +373,29 @@ MultiPayloadEnum readMultiPayloadEnum(const uint8_t *typeLayout,
     extraTagBitsSpareBits.data[i] = 1;
   }
 
-  return MultiPayloadEnum(numEmptyPayloads, payloadLengths, payloadSpareBits,
+  return MultiPayloadEnum(numEmptyPayloads, payloadLengths,
                           extraTagBitsSpareBits, payloadOffsets);
 }
 
-uint32_t MultiPayloadEnum::tagsInExtraInhabitants() const {
-  return std::min(payloadSpareBits.countExtraInhabitants(), numEmptyPayloads);
+const BitVector MultiPayloadEnum::commonSpareBits() const {
+  BitVector bits = ~BitVector(payloadSize()* 8);
+  for (uint i = 0; i < payloadLayoutPtr.size(); i++) {
+    auto caseSpareBits = ::spareBits(payloadLayoutPtr[i], payloadLayoutLength[i]);
+    auto numTrailingZeros = payloadSize()*8 - caseSpareBits.size();
+    auto extended = caseSpareBits + ~BitVector(numTrailingZeros);
+    bits &= extended;
+  }
+  return bits;
 }
 
-uint32_t MultiPayloadEnum::size() const { return spareBits().size() / 8; }
+uint32_t MultiPayloadEnum::tagsInExtraInhabitants() const {
+  return std::min(commonSpareBits().countExtraInhabitants(), numEmptyPayloads);
+}
+
+uint32_t MultiPayloadEnum::size() const { return payloadSize() + extraTagBitsSpareBits.size()/8; }
 
 BitVector MultiPayloadEnum::spareBits() const {
-  return payloadSpareBits + extraTagBitsSpareBits;
+  return commonSpareBits() + extraTagBitsSpareBits;
 }
 
 static BitVector pointerSpareBitMask() {
@@ -407,13 +410,7 @@ size_t computeSize(const uint8_t *typeLayout, size_t layoutLength) {
   while (offset < layoutLength) {
     switch ((LayoutType)typeLayout[offset]) {
     case LayoutType::AlignedGroup: {
-      AlignedGroup group = readAlignedGroup(typeLayout, offset);
-      for (auto field : group.fields) {
-        uint64_t shiftValue = uint64_t(1) << (field.alignment - '0');
-        uint64_t alignMask = shiftValue - 1;
-        addr = ((uint64_t)addr + alignMask) & (~alignMask);
-        addr += computeSize(field.fieldPtr, field.fieldLength);
-      }
+      addr += readAlignedGroup(typeLayout, offset).size();
       break;
     }
     case LayoutType::I8:
@@ -449,13 +446,11 @@ size_t computeSize(const uint8_t *typeLayout, size_t layoutLength) {
       offset++;
       break;
     case LayoutType::MultiPayloadEnum: {
-      MultiPayloadEnum e = readMultiPayloadEnum(typeLayout, offset);
-      addr += e.size();
+      addr += readMultiPayloadEnum(typeLayout, offset).size();
       break;
     }
     case LayoutType::SinglePayloadEnum: {
-      SinglePayloadEnum e = readSinglePayloadEnum(typeLayout, offset);
-      addr += e.size;
+      addr += readSinglePayloadEnum(typeLayout, offset).size;
       break;
     }
     }
@@ -463,9 +458,8 @@ size_t computeSize(const uint8_t *typeLayout, size_t layoutLength) {
   return addr;
 }
   
-std::pair<BitVector, size_t> spareBits(const uint8_t *typeLayout, size_t layoutLength) {
+BitVector spareBits(const uint8_t *typeLayout, size_t layoutLength) {
   BitVector bitVector;
-  size_t spareBitsOffset = 0;
 
   uint64_t addr = 0;
   size_t offset = 0;
@@ -474,10 +468,9 @@ std::pair<BitVector, size_t> spareBits(const uint8_t *typeLayout, size_t layoutL
   while (offset < layoutLength) {
     switch ((LayoutType)typeLayout[offset]) {
     case LayoutType::AlignedGroup: {
-      AlignedGroup a = readAlignedGroup(typeLayout, layoutLength);
-      std::pair<BitVector, size_t> groupSpareBits = a.spareBits();
-      bitVector = groupSpareBits.first;
-      spareBitsOffset = groupSpareBits.second;
+      AlignedGroup a = readAlignedGroup(typeLayout, offset);
+      BitVector groupSpareBits = a.spareBits();
+      bitVector = groupSpareBits;
       for (auto field : a.fields) {
         uint64_t shiftValue = uint64_t(1) << (field.alignment - '0');
         uint64_t alignMask = shiftValue - 1;
@@ -541,59 +534,136 @@ std::pair<BitVector, size_t> spareBits(const uint8_t *typeLayout, size_t layoutL
     }
     }
   }
-  return {bitVector, spareBitsOffset};
+  return bitVector;
 }
 
 
-std::pair<BitVector, size_t> AlignedGroup::spareBits() const {
+size_t AlignedGroup::size() const {
+  uint64_t addr = 0;
+  for (auto field : fields) {
+    uint64_t shiftValue = uint64_t(1) << (field.alignment - '0');
+    uint64_t alignMask = shiftValue - 1;
+    addr = ((addr + alignMask) & (~alignMask));
+    addr += computeSize(field.fieldPtr, field.fieldLength);
+  }
+  return addr;
+}
+
+BitVector AlignedGroup::spareBits() const {
+  // The spare bits of an aligned group is the field that has the most number of
+  // spare bits's spare bits vector, padded with zeros to the size of the struct
+  //
+  // In the case of a tie, we take the first field encountered.
   size_t offset = 0;
   size_t offsetOfBest = 0;
   BitVector maskOfBest;
 
   for (auto field : fields) {
-    std::pair<BitVector, size_t> fieldSpareBits = ::spareBits(field.fieldPtr, field.fieldLength);
-    if (fieldSpareBits.first.count() > maskOfBest.count()) {
-      offsetOfBest = offset + fieldSpareBits.second;
-      maskOfBest = fieldSpareBits.first;
+    BitVector fieldSpareBits = ::spareBits(field.fieldPtr, field.fieldLength);
+    // We're supposed to pick the first field (see
+    // RecordTypeInfoImpl::getFixedExtraInhabitantProvidingField), but what
+    // "first" seems to be gets reversed somewhere? So we pick the last field
+    // instead, thus ">=".
+    if (fieldSpareBits.count() >= maskOfBest.count()) {
+      offsetOfBest = offset;
+      maskOfBest = fieldSpareBits;
     }
     uint64_t shiftValue = uint64_t(1) << (field.alignment - '0');
     uint64_t alignMask = shiftValue - 1;
     offset = ((uint64_t)offset + alignMask) & (~alignMask);
     offset += computeSize(field.fieldPtr, field.fieldLength);
   }
-  return {maskOfBest, offsetOfBest};
+
+  return BitVector(offsetOfBest*8) + maskOfBest + BitVector((size() - offsetOfBest) * 8 - maskOfBest.size());
 }
 
 uint32_t MultiPayloadEnum::gatherSpareBits(const uint8_t *data,
-                                           unsigned firstBitOffset,
                                            unsigned resultBitWidth) const {
-  // 1. Figure out where the spare bits are stored
-  //    a. figure out extra inhabitants of each subfield
-  // Figure out where the spare bits are stored
-  assert(false && "NYI");
-  return 0;
+  // Use the enum's spare bit vector to mask out a value, and accumlate the
+  // resulting masked value into an int of the given size.
+  //
+  // For example:
+  // Enum Mask: 0xFF0FFF0F
+  // DATA:      0x12345678
+  // Produces 124568
+  //
+  // Enum Mask: 0xFF 0F FF 07
+  // DATA:      0x12 34 56 78
+  // Produces 0001 0010 0010 0100 0101 0110 111
+  // ->       000 1001 0001 0010 0010 1011 0111
+  // ->       1001 0001 0010 0010 1011 0111
+  // ->  0xB122D9
+  //
+  // We are given a result bitwidth, as if we gather the required bits without
+  // using all of the mask bits, we will stop.
+  //
+  // For example, to store the values 0-255 in a mask of 0xFFFF0000, the layout
+  // algorithm only uses the minimum number of bits to represent the values.
+  // 0x01000000
+  // 0x02000000
+  // ..
+  // 0xFF000000
+  // Even though we have additional bytes in the mask.
+  if (!resultBitWidth) {
+    return 0;
+  }
+
+  uint32_t result = 0;
+  uint32_t width = 0;
+
+  const uint8_t* addr = data;
+  size_t currByteIdx = 0;
+  size_t currWordIdx = 0;
+  uint32_t currBitIdx = 0;
+
+  for (auto bit: spareBits().data) {
+    uint64_t currWord = *(((const uint64_t*)addr)+currWordIdx);
+    uint8_t currByte = currWord >> (8*(7 - currByteIdx));
+    if (bit) {
+        result <<= 1;
+        if ((bit << (7-currBitIdx)) & currByte) {
+          result |= 1;
+        }
+        width += 1;
+        if (width == resultBitWidth) {
+          return result;
+        }
+    }
+    currBitIdx += 1;
+    if (currBitIdx == 8) {
+      currBitIdx = 0;
+      currByteIdx += 1;
+    }
+
+    if (currByteIdx == 8) {
+      currByteIdx = 0;
+      currWordIdx += 1;
+    }
+  }
+
+  return result;
 }
 
 uint32_t extractPayloadTag(const MultiPayloadEnum e, const uint8_t *data) {
+  unsigned numPayloads = e.payloadLayoutPtr.size();
+  unsigned casesPerTag = (~e.spareBits()).count() >= 32
+                             ? UINT_MAX
+                             : 1U << (~e.spareBits().count());
+  if (e.numEmptyPayloads != 0) {
+    ;
+    numPayloads += (e.numEmptyPayloads/casesPerTag) + 1;
+  }
+
+  unsigned requiredSpareBits = bitsToRepresent(numPayloads);
   unsigned numSpareBits = e.spareBits().count();
-  unsigned usedExtraTagSpareBits = (~e.extraTagBitsSpareBits).count();
-  unsigned numTagBits = numSpareBits + usedExtraTagSpareBits;
-
-  // Round up to the nearest usual int size. Code gen only emits power of two
-  // byte sizes (i8, i16) and i1.
-  unsigned roundedTagBits = numTagBits == 0    ? 0
-                            : numTagBits <= 1  ? 1
-                            : numTagBits <= 8  ? 8
-                            : numTagBits <= 16 ? 16
-                                               : 32;
-
   uint32_t tag = 0;
 
   // Get the tag bits from spare bits, if any.
   if (numSpareBits > 0) {
-    tag = e.gatherSpareBits(data, 0, roundedTagBits);
+    tag = e.gatherSpareBits(data, requiredSpareBits);
   }
 
+/*
   // Get the extra tag bits, if any.
   if (e.extraTagBitsSpareBits.size() > 0) {
     if (!tag) {
@@ -612,6 +682,7 @@ uint32_t extractPayloadTag(const MultiPayloadEnum e, const uint8_t *data) {
       tag |= extraTagValue;
     }
   }
+  */
   return tag;
 }
 
@@ -764,19 +835,9 @@ void swift::swift_value_witness_destroy(void *address,
       break;
     }
     case LayoutType::MultiPayloadEnum: {
-      std::cout << "got multi payload" << std::endl;
       MultiPayloadEnum e =
           readMultiPayloadEnum(typeLayout, offset);
       // numExtraInhabitants
-      std::cout << "readMultiEnum: E{numEmptyPayloads: " << e.numEmptyPayloads
-                << "}{numPayloads: " << e.payloadLayoutPtr.size() << "}{";
-      for (auto i : e.payloadLayoutLength) {
-        std::cout << (uint32_t)i << ",";
-      }
-      std::cout << "}\n";
-
-      std::cout << "Payload Size: " << std::hex << (uint32_t)e.payloadSize()
-                << std::endl;
 
       BitVector payloadBits;
       std::vector<uint8_t> wordVec;
@@ -802,38 +863,21 @@ void swift::swift_value_witness_destroy(void *address,
         }
       }
 
-      std::cout << "Payload: " << payloadBits.asStr() << std::endl;
-
       BitVector tagBits;
       for (uint i = 0; i < (e.extraTagBitsSpareBits.count() / 8); i++) {
-        std::cout << std::hex << (uint32_t)addr[i] << " ";
         tagBits.add(addr[i]);
       }
 
       uint32_t index = extractPayloadTag(e, addr);
-      std::cout << "Got index: " << index << std::endl;
 
       // Enum indices count payload cases first, then non payload cases. Thus a
       // payload index will always be in 0...numPayloadCases-1
-      /*
       if (index < e.payloadLayoutPtr.size()) {
-        std::cout << "Have a payload!" << std::endl;
-        std::cout << "Freeing!" << std::endl;
-
-        std::cout << "layout length: " << e.payloadLayoutLength[index] << std::endl;
-        std::cout << "layout ptr: " << e.payloadLayoutPtr[index] << std::endl;
-
-        std::cout << "addr: " << std::hex << *(uint64_t*) addr;
-        std::cout << " " << std::hex << *(((uint64_t*) addr)+1) << std::endl;
         (~e.spareBits()).maskBits(addr);
-        std::cout << "masked addr: " << std::hex << *(uint64_t*) addr;
-        std::cout << " " << std::hex << *(((uint64_t*) addr)+1) << std::endl << std::dec;
         swift::swift_value_witness_destroy((void *)addr,
                                            e.payloadLayoutPtr[index],
                                            e.payloadLayoutLength[index]);
-        std::cout << "Freed!" << std::endl;
       }
-      */
       addr += e.size();
       break;
     }

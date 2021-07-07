@@ -131,7 +131,7 @@ struct BitVector {
   BitVector(size_t bits);
 
   /// Format as a String
-  std::string asStr();
+  std::string asStr() const;
 
   /// Return the number of set bits in the bit vector
   size_t count() const;
@@ -190,7 +190,7 @@ uint32_t indexFromValue(BitVector mask, BitVector value, BitVector tagBits);
 
 uint32_t extractBits(BitVector mask, BitVector value);
 /// Get the sparebits mask and the offset that it's located at
-std::pair<BitVector,uint64_t> spareBits(const uint8_t *typeLayout, size_t layoutLength);
+BitVector spareBits(const uint8_t *typeLayout, size_t layoutLength);
 size_t computeSize(const uint8_t *typeLayout, size_t layoutLength);
 
 struct AlignedGroup {
@@ -206,7 +206,8 @@ struct AlignedGroup {
       : fields(fields) {}
   std::vector<Field> fields;
 
-  std::pair<BitVector, size_t> spareBits() const;
+  BitVector spareBits() const;
+  size_t size() const;
 };
 
 struct SinglePayloadEnum {
@@ -234,24 +235,27 @@ struct SinglePayloadEnum {
 struct MultiPayloadEnum {
   MultiPayloadEnum(uint32_t numEmptyPayloads,
                    std::vector<uint32_t> payloadLayoutLength,
-                   BitVector payloadSpareBits, BitVector extraTagBitsSpareBits,
+                   BitVector extraTagBitsSpareBits,
                    std::vector<const uint8_t *> payloadLayoutPtr)
       : numEmptyPayloads(numEmptyPayloads),
         payloadLayoutLength(payloadLayoutLength),
-        payloadLayoutPtr(payloadLayoutPtr), payloadSpareBits(payloadSpareBits),
+        payloadLayoutPtr(payloadLayoutPtr),
         extraTagBitsSpareBits(extraTagBitsSpareBits) {}
   const uint32_t numEmptyPayloads;
   const std::vector<uint32_t> payloadLayoutLength;
   const std::vector<const uint8_t *> payloadLayoutPtr;
-  const BitVector payloadSpareBits;
   const BitVector extraTagBitsSpareBits;
+
+  // The spare bits shared by all payloads, if any.
+  // Invariant: The size of the bit vector is the size of the payload in bits,
+  // rounded up to a byte boundary.
+  const BitVector commonSpareBits() const;
 
   uint32_t payloadSize() const;
   BitVector spareBits() const;
   uint32_t size() const;
   uint32_t tagsInExtraInhabitants() const;
-  uint32_t gatherSpareBits(const uint8_t *data, unsigned firstBitOffset,
-                           unsigned resultBitWidth) const;
+  uint32_t gatherSpareBits(const uint8_t *data, unsigned resultBitWidth) const;
 };
 AlignedGroup readAlignedGroup(const uint8_t *typeLayout,
                                       size_t &offset);
