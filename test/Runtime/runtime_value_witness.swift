@@ -172,4 +172,21 @@ Tests.test("MultiEnum") {
   let _ = MultiPayloadStruct(a: .NoPayload4, c: LifetimeTracked(0))
 }
 
+Tests.test("Archetypes") {
+  struct ArchetypeStruct<T> {
+    init(a: T, b: LifetimeTracked) {
+      self.a = a
+      self.b = b
+    }
+    let a: T
+    let b: LifetimeTracked
+  }
+
+  let _ = ArchetypeStruct<UInt64>(a: 0xAAAA, b: LifetimeTracked(0))
+  let _ = ArchetypeStruct<UInt32>(a: 0xBBBB, b: LifetimeTracked(0))
+  let _ = ArchetypeStruct<UInt16>(a: 0xCCCC, b: LifetimeTracked(0))
+  let _ = ArchetypeStruct<UInt8>(a: 0xDD, b: LifetimeTracked(0))
+  let _ = ArchetypeStruct<LifetimeTracked>(a: LifetimeTracked(0), b: LifetimeTracked(0))
+}
+
 runAllTests()
