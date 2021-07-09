@@ -1091,7 +1091,7 @@ AlignedGroupEntry::layoutString(IRGenFunction &IGF) const {
                    dyn_cast<llvm::Constant>(entry->alignmentMask(IGF))) {
       alignmentMask = alignmentVal->getUniqueInteger().getLimitedValue();
     } else {
-      return llvm::NoneType::None;
+      alignmentMask = UINT64_MAX;
     }
     switch (alignmentMask) {
     case (1 << 0) - 1:
@@ -1117,6 +1117,10 @@ AlignedGroupEntry::layoutString(IRGenFunction &IGF) const {
       break;
     case (1 << 7) - 1:
       layoutStr.push_back('7');
+      break;
+    case UINT64_MAX:
+      // Static alignment unknown, check type metadata at runtime
+      layoutStr.push_back('?');
       break;
     default:
       assert(false && "unknown alignment mask");
@@ -1462,7 +1466,15 @@ ArchetypeLayoutEntry::isBitwiseTakable(IRGenFunction &IGF) const {
 
 llvm::Optional<std::vector<uint8_t>>
 ArchetypeLayoutEntry::layoutString(IRGenFunction &IGF) const {
-  return llvm::NoneType::None;
+  std::vector<uint8_t> layoutStr;
+  // INDEX := UINT32
+  // ARCHETYPE := 'A' INDEX
+  layoutStr.push_back('A');
+  layoutStr.push_back(0);
+  layoutStr.push_back(0);
+  layoutStr.push_back(0);
+  layoutStr.push_back(0);
+  return layoutStr;
 }
 
 void ArchetypeLayoutEntry::destroy(IRGenFunction &IGF, Address addr) const {
@@ -1808,10 +1820,10 @@ llvm::Optional<uint32_t> EnumTypeLayoutEntry::fixedXICount(IRGenModule& IGM) con
   uint32_t extraTagBytes = extraTagInfo.numTagBytes;
   uint32_t numTags = extraTagInfo.numTags;
   if (extraTagBytes == 4) {
-    return ValueWitnessFlags::MaxNumExtraInhabitants;
+    return UINT32_MAX;
   } else {
-    auto numXIs = (1 << extraTagBytes * 8) - numTags;
-    return std::min(ValueWitnessFlags::MaxNumExtraInhabitants, numXIs);
+    uint32_t numXIs = (1 << extraTagBytes * 8) - numTags;
+    return std::min(UINT32_MAX, numXIs);
   }
 }
 

@@ -17,6 +17,7 @@
 
 #include "RuntimeValueWitness.h"
 #include "swift/ABI/MetadataValues.h"
+#include "swift/ABI/Metadata.h"
 #include "swift/Runtime/Error.h"
 #include "swift/Runtime/HeapObject.h"
 #include <Block.h>
@@ -273,7 +274,7 @@ T readBytes(const uint8_t *typeLayout, size_t &i) {
   i += sizeof(T);
   return returnVal;
 }
-AlignedGroup readAlignedGroup(const uint8_t *typeLayout, size_t &offset) {
+AlignedGroup readAlignedGroup(const uint8_t *typeLayout, size_t &offset, Metadata* metadata) {
   // a numFields (alignment,fieldLength,field)+
   // ALIGNED_GROUP:= 'a' SIZE (ALIGNMENT SIZE VALUE)+
   readBytes<uint8_t>(typeLayout, offset);
@@ -285,11 +286,11 @@ AlignedGroup readAlignedGroup(const uint8_t *typeLayout, size_t &offset) {
     fields.emplace_back(alignment, layoutLen, typeLayout+offset);
     offset += layoutLen;
   }
-  return AlignedGroup(fields);
+  return AlignedGroup(fields, metadata);
 }
 
 SinglePayloadEnum readSinglePayloadEnum(const uint8_t *typeLayout,
-                                        size_t &offset) {
+                                        size_t &offset, Metadata* metadata) {
   // SINGLEENUM := 'e' SIZE SIZE VALUE
   // e NumEmptyPayloads LengthOfPayload Payload
 
@@ -298,9 +299,9 @@ SinglePayloadEnum readSinglePayloadEnum(const uint8_t *typeLayout,
   uint32_t numEmptyPayloads = readBytes<uint32_t>(typeLayout, offset);
   uint32_t payloadLayoutLength = readBytes<uint32_t>(typeLayout, offset);
   const uint8_t *payloadLayoutPtr = typeLayout + offset;
-  uint32_t payloadSize = computeSize(payloadLayoutPtr, payloadLayoutLength);
+  uint32_t payloadSize = computeSize(payloadLayoutPtr, payloadLayoutLength, metadata);
 
-  BitVector payloadSpareBits = spareBits(payloadLayoutPtr, payloadLayoutLength);
+  BitVector payloadSpareBits = spareBits(payloadLayoutPtr, payloadLayoutLength, metadata);
   uint32_t numExtraInhabitants = payloadSpareBits.countExtraInhabitants();
 
   uint32_t tagsInExtraInhabitants =
@@ -318,18 +319,18 @@ SinglePayloadEnum readSinglePayloadEnum(const uint8_t *typeLayout,
   offset += payloadLayoutLength;
   return SinglePayloadEnum(numEmptyPayloads, payloadLayoutLength, payloadSize,
                            tagsInExtraInhabitants, enumSpareBits,
-                           payloadSpareBits, payloadLayoutPtr, tagSize);
+                           payloadSpareBits, payloadLayoutPtr, tagSize, metadata);
 }
 
 uint32_t MultiPayloadEnum::payloadSize() const {
   size_t maxSize = 0;
   for (uint i = 0; i < payloadLayoutPtr.size(); i++) {
-    maxSize = std::max(maxSize, computeSize(payloadLayoutPtr[i], payloadLayoutLength[i]));
+    maxSize = std::max(maxSize, computeSize(payloadLayoutPtr[i], payloadLayoutLength[i], metadata));
   }
   return maxSize;
 }
 MultiPayloadEnum readMultiPayloadEnum(const uint8_t *typeLayout,
-                                      size_t &offset) {
+                                      size_t &offset, Metadata* metadata) {
   // // E numEmptyPayloads numPayloads lengthOfEachPayload payloads
   // MULTIENUM := 'E' SIZE SIZE SIZE+ VALUE+
 
@@ -345,7 +346,7 @@ MultiPayloadEnum readMultiPayloadEnum(const uint8_t *typeLayout,
   }
   for (auto payloadLength : payloadLengths) {
     payloadOffsets.push_back(typeLayout + offset);
-    casesSpareBits.push_back(spareBits(typeLayout + offset, payloadLength));
+    casesSpareBits.push_back(spareBits(typeLayout + offset, payloadLength, metadata));
     offset += payloadLength;
   }
 
@@ -374,13 +375,13 @@ MultiPayloadEnum readMultiPayloadEnum(const uint8_t *typeLayout,
   }
 
   return MultiPayloadEnum(numEmptyPayloads, payloadLengths,
-                          extraTagBitsSpareBits, payloadOffsets);
+                          extraTagBitsSpareBits, payloadOffsets, metadata);
 }
 
 const BitVector MultiPayloadEnum::commonSpareBits() const {
   BitVector bits = ~BitVector(payloadSize()* 8);
   for (uint i = 0; i < payloadLayoutPtr.size(); i++) {
-    auto caseSpareBits = ::spareBits(payloadLayoutPtr[i], payloadLayoutLength[i]);
+    auto caseSpareBits = ::spareBits(payloadLayoutPtr[i], payloadLayoutLength[i], metadata);
     auto numTrailingZeros = payloadSize()*8 - caseSpareBits.size();
     auto extended = caseSpareBits + ~BitVector(numTrailingZeros);
     bits &= extended;
@@ -404,13 +405,13 @@ static BitVector pointerSpareBitMask() {
       std::vector<uint8_t>({0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07}));
 }
 
-size_t computeSize(const uint8_t *typeLayout, size_t layoutLength) {
+size_t computeSize(const uint8_t *typeLayout, size_t layoutLength, Metadata* metadata) {
   size_t addr = 0;
   size_t offset = 0;
   while (offset < layoutLength) {
     switch ((LayoutType)typeLayout[offset]) {
     case LayoutType::AlignedGroup: {
-      addr += readAlignedGroup(typeLayout, offset).size();
+      addr += readAlignedGroup(typeLayout, offset, metadata).size();
       break;
     }
     case LayoutType::I8:
@@ -446,11 +447,17 @@ size_t computeSize(const uint8_t *typeLayout, size_t layoutLength) {
       offset++;
       break;
     case LayoutType::MultiPayloadEnum: {
-      addr += readMultiPayloadEnum(typeLayout, offset).size();
+      addr += readMultiPayloadEnum(typeLayout, offset, metadata).size();
       break;
     }
     case LayoutType::SinglePayloadEnum: {
-      addr += readSinglePayloadEnum(typeLayout, offset).size;
+      addr += readSinglePayloadEnum(typeLayout, offset, metadata).size;
+      break;
+    }
+    case LayoutType::ArcheType: {
+      readBytes<uint8_t>(typeLayout, offset);
+      uint32_t index = readBytes<uint32_t>(typeLayout, offset);
+      addr += metadata->getGenericArgs()[index]->getValueWitnesses()->getSize();
       break;
     }
     }
@@ -458,7 +465,7 @@ size_t computeSize(const uint8_t *typeLayout, size_t layoutLength) {
   return addr;
 }
   
-BitVector spareBits(const uint8_t *typeLayout, size_t layoutLength) {
+BitVector spareBits(const uint8_t *typeLayout, size_t layoutLength, Metadata* metadata) {
   BitVector bitVector;
 
   uint64_t addr = 0;
@@ -468,15 +475,9 @@ BitVector spareBits(const uint8_t *typeLayout, size_t layoutLength) {
   while (offset < layoutLength) {
     switch ((LayoutType)typeLayout[offset]) {
     case LayoutType::AlignedGroup: {
-      AlignedGroup a = readAlignedGroup(typeLayout, offset);
-      BitVector groupSpareBits = a.spareBits();
-      bitVector = groupSpareBits;
-      for (auto field : a.fields) {
-        uint64_t shiftValue = uint64_t(1) << (field.alignment - '0');
-        uint64_t alignMask = shiftValue - 1;
-        addr = ((uint64_t)addr + alignMask) & (~alignMask);
-        addr += computeSize(field.fieldPtr, field.fieldLength);
-      }
+      AlignedGroup a = readAlignedGroup(typeLayout, offset, metadata);
+      bitVector = a.spareBits();
+      addr += a.size();
       break;
     }
     case LayoutType::I8:
@@ -521,15 +522,19 @@ BitVector spareBits(const uint8_t *typeLayout, size_t layoutLength) {
       break;
     }
     case LayoutType::MultiPayloadEnum: {
-      MultiPayloadEnum e = readMultiPayloadEnum(typeLayout, offset);
+      MultiPayloadEnum e = readMultiPayloadEnum(typeLayout, offset, metadata);
       bitVector.add(e.spareBits());
       addr += e.size();
       break;
     }
     case LayoutType::SinglePayloadEnum: {
-      SinglePayloadEnum e = readSinglePayloadEnum(typeLayout, offset);
+      SinglePayloadEnum e = readSinglePayloadEnum(typeLayout, offset, metadata);
       bitVector.add(e.spareBits);
       addr += e.size;
+      break;
+    }
+    case LayoutType::ArcheType: {
+      //assert(false && "NYI");
       break;
     }
     }
@@ -541,10 +546,15 @@ BitVector spareBits(const uint8_t *typeLayout, size_t layoutLength) {
 size_t AlignedGroup::size() const {
   uint64_t addr = 0;
   for (auto field : fields) {
+    if (field.alignment == '?') {
+      // We'd have to hit the vw table for the field's alignment, so let's just
+      // get the size of the whole thing.
+      return metadata->vw_size();
+    }
     uint64_t shiftValue = uint64_t(1) << (field.alignment - '0');
     uint64_t alignMask = shiftValue - 1;
     addr = ((addr + alignMask) & (~alignMask));
-    addr += computeSize(field.fieldPtr, field.fieldLength);
+    addr += computeSize(field.fieldPtr, field.fieldLength, metadata);
   }
   return addr;
 }
@@ -559,7 +569,7 @@ BitVector AlignedGroup::spareBits() const {
   BitVector maskOfBest;
 
   for (auto field : fields) {
-    BitVector fieldSpareBits = ::spareBits(field.fieldPtr, field.fieldLength);
+    BitVector fieldSpareBits = ::spareBits(field.fieldPtr, field.fieldLength, metadata);
     // We're supposed to pick the first field (see
     // RecordTypeInfoImpl::getFixedExtraInhabitantProvidingField), but what
     // "first" seems to be gets reversed somewhere? So we pick the last field
@@ -571,7 +581,7 @@ BitVector AlignedGroup::spareBits() const {
     uint64_t shiftValue = uint64_t(1) << (field.alignment - '0');
     uint64_t alignMask = shiftValue - 1;
     offset = ((uint64_t)offset + alignMask) & (~alignMask);
-    offset += computeSize(field.fieldPtr, field.fieldLength);
+    offset += computeSize(field.fieldPtr, field.fieldLength, metadata);
   }
 
   return BitVector(offsetOfBest*8) + maskOfBest + BitVector((size() - offsetOfBest) * 8 - maskOfBest.size());
@@ -689,20 +699,28 @@ uint32_t extractPayloadTag(const MultiPayloadEnum e, const uint8_t *data) {
 SWIFT_RUNTIME_EXPORT
 void swift::swift_value_witness_destroy(void *address,
                                         const uint8_t *typeLayout,
-                                        uint32_t layoutLength) {
+                                        uint32_t layoutLength, void *metadata) {
+  Metadata* typedMetadata = (Metadata*)metadata;
+
   uint8_t *addr = (uint8_t *)address;
   size_t offset = 0;
 
   while (offset < layoutLength) {
     switch ((LayoutType)typeLayout[offset]) {
     case LayoutType::AlignedGroup: {
-      AlignedGroup group = readAlignedGroup(typeLayout, offset);
+      AlignedGroup group = readAlignedGroup(typeLayout, offset, typedMetadata);
       for (auto field : group.fields) {
-        uint64_t shiftValue = uint64_t(1) << (field.alignment - '0');
-        uint64_t alignMask = shiftValue - 1;
+        uint64_t alignMask;
+        if (field.alignment == '?') {
+          alignMask = typedMetadata->getGenericArgs()[0]->vw_alignment();
+        } else {
+          uint64_t shiftValue = uint64_t(1) << (field.alignment - '0');
+          alignMask = shiftValue - 1;
+        }
         addr = (uint8_t *)(((uint64_t)addr + alignMask) & (~alignMask));
-        swift_value_witness_destroy(addr, field.fieldPtr, field.fieldLength);
-        addr += computeSize(field.fieldPtr, field.fieldLength);
+        swift_value_witness_destroy(addr, field.fieldPtr, field.fieldLength,
+                                    metadata);
+        addr += computeSize(field.fieldPtr, field.fieldLength, typedMetadata);
       }
       break;
     }
@@ -775,7 +793,7 @@ void swift::swift_value_witness_destroy(void *address,
       offset++;
       break;
     case LayoutType::SinglePayloadEnum: {
-      SinglePayloadEnum e = readSinglePayloadEnum(typeLayout, offset);
+      SinglePayloadEnum e = readSinglePayloadEnum(typeLayout, offset, typedMetadata);
 
       if (e.tagsInExtraInhabitants > 0) {
         BitVector masked;
@@ -830,13 +848,13 @@ void swift::swift_value_witness_destroy(void *address,
       }
 
       swift::swift_value_witness_destroy((void *)addr, e.payloadLayoutPtr,
-                                         e.payloadLayoutLength);
+                                         e.payloadLayoutLength, metadata);
       addr += e.size;
       break;
     }
     case LayoutType::MultiPayloadEnum: {
       MultiPayloadEnum e =
-          readMultiPayloadEnum(typeLayout, offset);
+          readMultiPayloadEnum(typeLayout, offset, typedMetadata);
       // numExtraInhabitants
 
       BitVector payloadBits;
@@ -876,9 +894,19 @@ void swift::swift_value_witness_destroy(void *address,
         (~e.spareBits()).maskBits(addr);
         swift::swift_value_witness_destroy((void *)addr,
                                            e.payloadLayoutPtr[index],
-                                           e.payloadLayoutLength[index]);
+                                           e.payloadLayoutLength[index], metadata);
       }
       addr += e.size();
+      break;
+    }
+    case LayoutType::ArcheType: {
+      // Read 'A'
+      // Kind is a pointer sized int at offset 0 of metadata pointer
+      readBytes<uint8_t>(typeLayout, offset);
+      uint32_t index = readBytes<uint32_t>(typeLayout, offset);
+      Metadata* typedMetadata = (Metadata*)metadata;
+      typedMetadata->getGenericArgs()[index]->getValueWitnesses()->destroy((OpaqueValue*)addr, typedMetadata);
+      addr += typedMetadata->getGenericArgs()[index]->getValueWitnesses()->getSize();
       break;
     }
     }

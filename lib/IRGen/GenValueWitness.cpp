@@ -43,6 +43,7 @@
 #include "IRGenFunction.h"
 #include "IRGenModule.h"
 #include "MetadataLayout.h"
+#include "MetadataRequest.h"
 #include "StructLayout.h"
 #include "TypeInfo.h"
 
@@ -530,8 +531,11 @@ static void buildValueWitnessFunction(IRGenModule &IGM,
         auto castStr =
             IGF.Builder.CreateBitCast(layoutArray, IGF.Builder.getInt8PtrTy());
         llvm::Value *size = IGF.Builder.getInt32(layoutStr->size());
+
+        llvm::Value* metadata = &*(fn->arg_begin()+1);
+        metadata->setName("typeMetadata");
         IGF.Builder.CreateCall(IGF.IGM.getValueWitnessDestroyFn(),
-                               {castAddr, castStr, size});
+                               {castAddr, castStr, size, IGF.Builder.CreateBitCast(metadata, IGF.Builder.getInt8PtrTy())});
       } else {
         typeLayoutEntry->destroy(IGF, object);
       }

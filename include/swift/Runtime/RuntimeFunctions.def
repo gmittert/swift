@@ -1761,12 +1761,12 @@ FUNCTION(StoreMultiPayloadEnumTagSinglePayload,
          ARGS(OpaquePtrTy, Int32Ty, Int32Ty, TypeMetadataPtrTy),
          ATTRS(NoUnwind))
 
-// void *swift_value_witness_destroy(void*, const char*, int32_t);
+// void *swift_value_witness_destroy(void*, const char*, int32_t, void*);
 FUNCTION(ValueWitnessDestroy,
          swift_value_witness_destroy,
          C_CC, AlwaysAvailable,
          RETURNS(VoidTy),
-         ARGS(Int8PtrTy, Int8PtrTy, Int32Ty),
+         ARGS(Int8PtrTy, Int8PtrTy, Int32Ty, Int8PtrTy),
          ATTRS(NoUnwind))
 
 #undef RETURNS

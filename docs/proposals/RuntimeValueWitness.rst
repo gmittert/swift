@@ -40,7 +40,7 @@ Then copy a value from src to dest without retaining or releasing.
 Value types
 *******
 
-VALUE := SCALAR | ALIGNED_GROUP | SINGLE_ENUM | MULTI_ENUM
+VALUE := SCALAR | ALIGNED_GROUP | SINGLE_ENUM | MULTI_ENUM | ARCHETYPE
 
 Scalars
 ******
@@ -235,3 +235,26 @@ A Multi enum with 3 no payload cases, two payloads,  one of a struct, the other 
     'E<0x0><0x0><0x0><0x3><0x0><0x0><0x0><0x2><0x0><0x0><0x0><0x4><0x0><0x0><0x0><0x1>N4N4N'
      ^| Num no payloads  | num payloads      | strlength payload1 |strlen payload2   |^| MyStruct
      |----+--------Multi Enum Indicator                                               |--SomeClass
+
+
+Archtypes
+----
+Archetypes are the type variables passed in through types. For example, in the struct
+  ::
+   struct Example<T> { a: T}
+
+T is the archetype. We don't T's size statically unless it gets specialized,
+but we can find out through the passed in type metadata pointer.
+
+INDEX := UINT32
+ARCHETYPE := 'A' INDEX
+
+The associated index represents the index into the generic argument vector
+for the passed in type. From there, we can get the type metadata for the type
+which gives us the size, alignment, and extra inhabitants which we need for
+copying and destorying
+
+Resilient Structs
+---
+Resilient Structs always have to call into the value witness table because we
+don't know they are laid out statically.

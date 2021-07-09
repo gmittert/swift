@@ -18,6 +18,7 @@
 #define SWIFT_RUNTIME_VALUE_WITNESS_H
 
 #include "swift/Runtime/Config.h"
+#include "swift/ABI/Metadata.h"
 #include <cstdint>
 #include <vector>
 
@@ -115,11 +116,12 @@ enum class LayoutType : char {
   SinglePayloadEnum = 'e',
   MultiPayloadEnum = 'E',
   AlignedGroup = 'a',
+  ArcheType = 'A',
 };
 
 SWIFT_RUNTIME_EXPORT
 void swift_value_witness_destroy(void *address, const uint8_t *typeLayout,
-                                 uint32_t layoutLength);
+                                 uint32_t layoutLength, void* metadata);
 } // namespace swift
 
 struct BitVector {
@@ -190,8 +192,8 @@ uint32_t indexFromValue(BitVector mask, BitVector value, BitVector tagBits);
 
 uint32_t extractBits(BitVector mask, BitVector value);
 /// Get the sparebits mask and the offset that it's located at
-BitVector spareBits(const uint8_t *typeLayout, size_t layoutLength);
-size_t computeSize(const uint8_t *typeLayout, size_t layoutLength);
+BitVector spareBits(const uint8_t *typeLayout, size_t layoutLength, swift::Metadata* metadata);
+size_t computeSize(const uint8_t *typeLayout, size_t layoutLength, swift::Metadata* metadata);
 
 struct AlignedGroup {
   struct Field {
@@ -202,9 +204,10 @@ struct AlignedGroup {
     uint32_t fieldLength;
     const uint8_t* fieldPtr;
   };
-  AlignedGroup(std::vector<AlignedGroup::Field> fields)
-      : fields(fields) {}
+  AlignedGroup(std::vector<AlignedGroup::Field> fields, swift::Metadata* metadata)
+      : fields(fields), metadata(metadata) {}
   std::vector<Field> fields;
+  swift::Metadata* metadata;
 
   BitVector spareBits() const;
   size_t size() const;
@@ -214,13 +217,13 @@ struct SinglePayloadEnum {
   SinglePayloadEnum(uint32_t numEmptyPayloads, uint32_t payloadLayoutLength,
                     uint32_t payloadSize, uint32_t tagsInExtraInhabitants,
                     BitVector spareBits, BitVector payloadSpareBits,
-                    const uint8_t *payloadLayoutPtr, uint8_t tagSize)
+                    const uint8_t *payloadLayoutPtr, uint8_t tagSize, swift::Metadata* metadata)
       : numEmptyPayloads(numEmptyPayloads),
         payloadLayoutLength(payloadLayoutLength),
         payloadLayoutPtr(payloadLayoutPtr), payloadSize(payloadSize),
         tagsInExtraInhabitants(tagsInExtraInhabitants), spareBits(spareBits),
         payloadSpareBits(payloadSpareBits), tagSize(tagSize),
-        size(payloadSize + tagSize) {}
+        size(payloadSize + tagSize), metadata(metadata) {}
   uint32_t numEmptyPayloads;
   uint32_t payloadLayoutLength;
   const uint8_t *payloadLayoutPtr;
@@ -230,21 +233,23 @@ struct SinglePayloadEnum {
   BitVector payloadSpareBits;
   uint8_t tagSize;
   uint8_t size;
+  swift::Metadata* metadata;
 };
 
 struct MultiPayloadEnum {
   MultiPayloadEnum(uint32_t numEmptyPayloads,
                    std::vector<uint32_t> payloadLayoutLength,
                    BitVector extraTagBitsSpareBits,
-                   std::vector<const uint8_t *> payloadLayoutPtr)
+                   std::vector<const uint8_t *> payloadLayoutPtr, swift::Metadata* metadata)
       : numEmptyPayloads(numEmptyPayloads),
         payloadLayoutLength(payloadLayoutLength),
         payloadLayoutPtr(payloadLayoutPtr),
-        extraTagBitsSpareBits(extraTagBitsSpareBits) {}
+        extraTagBitsSpareBits(extraTagBitsSpareBits), metadata(metadata) {}
   const uint32_t numEmptyPayloads;
   const std::vector<uint32_t> payloadLayoutLength;
   const std::vector<const uint8_t *> payloadLayoutPtr;
   const BitVector extraTagBitsSpareBits;
+  swift::Metadata* metadata;
 
   // The spare bits shared by all payloads, if any.
   // Invariant: The size of the bit vector is the size of the payload in bits,
@@ -258,10 +263,10 @@ struct MultiPayloadEnum {
   uint32_t gatherSpareBits(const uint8_t *data, unsigned resultBitWidth) const;
 };
 AlignedGroup readAlignedGroup(const uint8_t *typeLayout,
-                                      size_t &offset);
+                                      size_t &offset, swift::Metadata* metadata);
 MultiPayloadEnum readMultiPayloadEnum(const uint8_t *typeLayout,
-                                      size_t &offset);
+                                      size_t &offset, swift::Metadata* metadata);
 SinglePayloadEnum readSinglePayloadEnum(const uint8_t *typeLayout,
-                                        size_t &offset);
+                                        size_t &offset, swift::Metadata* metadata);
 
 #endif // SWIFT_RUNTIME_VALUE_WITNESS_H

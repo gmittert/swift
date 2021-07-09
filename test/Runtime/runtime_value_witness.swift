@@ -189,4 +189,21 @@ Tests.test("Archetypes") {
   let _ = ArchetypeStruct<LifetimeTracked>(a: LifetimeTracked(0), b: LifetimeTracked(0))
 }
 
+Tests.test("Multi Archetypes") {
+  struct ArchetypeStruct<S, T> {
+    init(a: S, b: LifetimeTracked, c: T) {
+      self.a = a
+      self.b = b
+      self.c = c
+    }
+    let a: S
+    let b: LifetimeTracked
+    let c: T
+  }
+
+  let _ = ArchetypeStruct<LifetimeTracked, LifetimeTracked>(a: LifetimeTracked(0), b: LifetimeTracked(0), c: LifetimeTracked(0))
+  let _ = ArchetypeStruct<UInt64, UInt64>(a: 0xAAAA, b: LifetimeTracked(0), c: 0)
+  let _ = ArchetypeStruct<UInt64, LifetimeTracked>(a: 0xAAAA, b: LifetimeTracked(0), c: LifetimeTracked(0))
+}
+
 runAllTests()
